@@ -1,0 +1,126 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "eigenmode_output"
+  },
+  "Model": {
+    "Mesh": "test.msh",
+    "L0": 1e-06,
+    "Lc": 0.0,
+    "Refinement": {
+      "Tol": 0.01,
+      "MaxIts": 3,
+      "Nonconformal": false,
+      "SaveAdaptMesh": true,
+      "SaveAdaptIterations": true
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          8
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 11.5,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [
+          6,
+          7
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            8
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": [
+      {
+        "Attributes": [
+          1,
+          2,
+          3
+        ]
+      }
+    ],
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          9
+        ],
+        "Direction": "+X",
+        "R": 50.0,
+        "L": 0.0,
+        "C": 0.0
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          10
+        ],
+        "Direction": "-X",
+        "R": 50.0,
+        "L": 0.0,
+        "C": 0.0
+      },
+      {
+        "Index": 3,
+        "Attributes": [
+          11
+        ],
+        "Direction": "-Y",
+        "R": 50.0,
+        "L": 0.0,
+        "C": 0.0
+      },
+      {
+        "Index": 4,
+        "Attributes": [
+          12
+        ],
+        "Direction": "+Y",
+        "R": 50.0,
+        "L": 0.0,
+        "C": 0.0
+      }
+    ],
+    "Impedance": [
+      {
+        "Attributes": [
+          5
+        ],
+        "Rs": 45440000000.0
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 10,
+      "Save": 10,
+      "Type": "Default",
+      "Target": 2.0,
+      "Tol": 1e-08
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "Default"
+    }
+  }
+}

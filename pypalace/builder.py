@@ -1,23 +1,94 @@
-def Material(Attributes,Permeability,Permittivity,LossTan):
-    current_material_def = '{"Attributes": [' + ",".join(str(atts) for atts in Attributes) + '],\n"Permeability":' + str(Permeability) + ',\n"Permittivity":' + str(Permittivity) + ',\n"LossTan":' + str(LossTan) + '}'
-    return current_material_def
+import numpy as np
 
-def BoundaryCondition_PEC(Attributes):
-    current_PEC_def = '{"Attributes": [' + ",".join(str(atts) for atts in Attributes) + ']}'
-    return current_PEC_def,"PEC"
+class Domains:
+    
+    def Material(Attributes,Permeability,Permittivity,LossTan):
+        dict = {"Attributes":Attributes,
+                "Permeability":Permeability,
+                "Permittivity":Permittivity,
+                "LossTan":LossTan}
+        
+        return dict
 
-def BoundaryCondition_LumpedPort(Index,Attributes,Direction,R,L,C):
-    current_LP_def = '{Index:' + str(Index) + ',\n"Attributes": [' + ",".join(str(atts) for atts in Attributes) + '],\n"Direction":' + Direction + ',\n"R":' + str(R) + ',\n"L":' + str(L) + ',\n"C":' + str(C) +'}'
-    return current_LP_def,"LumpedPort"
+    def Postprocessing_Energy(Index,Attributes):
+        dict  = {"Index":Index,
+                 "Attributes":Attributes}
+        
+        return dict,"Energy"
 
-def BoundaryCondition_Impedance(Attributes,Rs):
-    current_Im_def = '{"Attributes": [' + ",".join(str(atts) for atts in Attributes) + '],\n"Rs":' + str(Rs) + '}'
-    return current_Im_def,"Impedance"
+class Boundaries:
+    
+    def PEC(Attributes):
+        dict = {"Attributes":Attributes}
+        return dict,"PEC"
 
-def PostProcessing_Boundary_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
-    current  = '{Index:' + str(Index) + ',\n"Attributes": [' + ",".join(str(atts) for atts in Attributes) + '],\n"Type":' + Type + ',\n"Thickness":' + str(Thickness) + ',\n"Permittivity":' + str(Permittivity) + ',\n"LossTan":' + str(LossTan) +'}'
-    return current,"Dielectric"
+    def LumpedPort(Index,Attributes,Direction,R,L,C):
+        dict = {"Index":Index,
+                "Attributes":Attributes,
+                "Direction":Direction,
+                "R":R,
+                "L":L,
+                "C":C}
+        
+        return dict,"LumpedPort"
 
-def PostProcessing_Domain_Energy(Index,Attributes):
-    current  = '{Index:' + str(Index) + ',\n"Attributes": [' + ",".join(str(atts) for atts in Attributes) + ']}'
-    return current,"Energy"
+    def Impedance(Attributes,Rs=None,Ls=None,Cs=None):
+
+        dict = {"Attributes":Attributes}
+
+        impedance_list = np.array([Rs,Ls,Cs])
+        impedance_labels = np.array(["Rs","Ls","Cs"])
+        impedance_mask = impedance_list[:,] == None
+
+        impedance_list = impedance_list[~impedance_mask]
+        impedance_labels = impedance_labels[~impedance_mask]
+
+        for i in range(len(impedance_list)):
+            dict[impedance_labels[i]] = impedance_list[i]
+
+        return dict,"Impedance"
+
+    def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
+        dict = {"Index":Index,
+                "Attributes":Attributes,
+                "Type":Type,
+                "Thickness":Thickness,
+                "Permittivity":Permittivity,
+                "LossTan":LossTan}
+
+        return dict,"Dielectric"
+
+class Solver:
+    def Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=0,Type="Default"):
+
+        eigenmode_dict = {"N":N,
+                  "Save":Save,
+                  "Type":Type}
+    
+        eigenmode_list = np.array([Target,Tol,MaxIts,MaxSize])
+        eigenmode_labels = np.array(["Target","Tol","MaxIts","MaxSize"])
+        eigenmode_mask = eigenmode_list[:,] == None
+
+        eigenmode_list = eigenmode_list[~eigenmode_mask]
+        eigenmode_labels = eigenmode_labels[~eigenmode_mask]
+
+        for i in range(len(eigenmode_list)):
+            eigenmode_dict[eigenmode_labels[i]] = eigenmode_list[i]
+
+        return eigenmode_dict,"Eigenmode"
+
+    def Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
+
+        Linear_dict = {"Type":Type,
+                       "KSPType": KSPType}
+
+        Linear_list = np.array([Tol,MaxIts,MaxSize])
+        Linear_labels = np.array(["Tol","MaxIts","MaxSize"])
+        Linear_mask = Linear_list[:,] == None
+
+        Linear_list = Linear_list[~Linear_mask]
+        Linear_labels = Linear_labels[~Linear_mask]
+
+        for i in range(len(Linear_list)):
+            Linear_dict[Linear_labels[i]] = Linear_list[i]
+        
