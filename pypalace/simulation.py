@@ -1,7 +1,7 @@
 import json
 import numpy as np
 
-class simulation:
+class Simulation:
     def __init__(self,Type,Verbose=2,Output="sim_output"):
         
         self.tracker = ["Problem"]
@@ -157,5 +157,5 @@ class simulation:
                 json.dump(self.sim, f, indent=2)
         
 
-    def print_script(self):
+    def print_config(self):
         print(json.dumps(self.sim, indent=2))

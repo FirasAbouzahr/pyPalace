@@ -1,6 +1,6 @@
-from pypalace import simulation, Domains, Boundaries, Solver
+from pypalace import Simulation, Domains, Boundaries, Solver
 
-my_sim = simulation("Eigenmode",Output="eigenmode_output")
+my_sim = Simulation("Eigenmode",Output="eigenmode_output")
 
 my_sim.add_Model("test.msh",
                  Tol = 1.0e-2,
@@ -41,5 +41,5 @@ my_sim.add_Domains(my_materials,Domain_postprocessing)
 my_sim.add_Boundaries(my_BCs)
 my_sim.add_Solver(Simulation=eigenmode_params,Order = 2,Linear=Linear_params)
 
-my_sim.print_script()
+my_sim.print_config()
 my_sim.save_config("eigenmode_example.json")
