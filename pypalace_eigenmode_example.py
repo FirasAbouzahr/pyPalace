@@ -1,6 +1,6 @@
-from pypalace import Simulation, Domains, Boundaries, Solver
+from pypalace import Config, Domains, Boundaries, Solver
 
-my_sim = Simulation("Eigenmode",Output="eigenmode_output")
+my_sim = Config("Eigenmode",Output="eigenmode_output")
 
 my_sim.add_Model("test.msh",
                  Tol = 1.0e-2,

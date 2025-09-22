@@ -1,22 +1,19 @@
 import json
 import numpy as np
 
-class Simulation:
+class Config:
     def __init__(self,Type,Verbose=2,Output="sim_output"):
         
         self.tracker = ["Problem"]
 
         self.Type = Type.lower().capitalize()
         
-        self.simulation_type = self.Type
-
         self.sim = {"Problem":
                      {"Type":Type,
                       "Verbose":Verbose,
                       "Output":Output
                      }
                     }
-
     def add_Model(self,Mesh,L0=1.0e-6,Lc=0.0,Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,SaveAdaptMesh=None,SaveAdaptIterations=None):
 
         self.tracker.append("Model")
