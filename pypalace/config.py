@@ -85,7 +85,7 @@ class Config:
         boundary_dict = {}
 
         if len(PECs) != 0:
-            boundary_dict["PEC"] = list(PECs)
+            boundary_dict["PEC"] = list(PECs)[0]
         if len(LumpedPorts) != 0:
             boundary_dict["LumpedPort"] = list(LumpedPorts)
         if len(Impedances) != 0:

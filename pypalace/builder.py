@@ -59,11 +59,11 @@ class Boundaries:
         return dict,"Dielectric"
 
 class Solver:
-    def Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=0,Type="Default"):
+    def Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
 
         eigenmode_dict = {"N":N,
-                  "Save":Save,
-                  "Type":Type}
+                          "Save":Save,
+                          "Type":Type}
     
         eigenmode_list = np.array([Target,Tol,MaxIts,MaxSize])
         eigenmode_labels = np.array(["Target","Tol","MaxIts","MaxSize"])
@@ -91,4 +91,6 @@ class Solver:
 
         for i in range(len(Linear_list)):
             Linear_dict[Linear_labels[i]] = Linear_list[i]
+        
+        return Linear_dict
         
