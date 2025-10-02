@@ -62,7 +62,7 @@ class Config:
                 postprocessing_dict["Energy"] = list(Energeies)
                 
             if len(Probes) != 0:
-                postprocessing_dict["Probes"] = list(Probes)
+                postprocessing_dict["Probe"] = list(Probes)
 
             domain_dict["Postprocessing"] = postprocessing_dict
 

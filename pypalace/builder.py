@@ -2,12 +2,21 @@ import numpy as np
 
 class Domains:
     
-    def Material(Attributes,Permeability,Permittivity,LossTan):
+    def Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None):
         dict = {"Attributes":Attributes,
                 "Permeability":Permeability,
-                "Permittivity":Permittivity,
-                "LossTan":LossTan}
+                "Permittivity":Permittivity}
+                
+        material_list = np.array([LossTan,Conductivity,LondonDepth,MaterialAxes])
+        material_labels = np.array(["LossTan","Conductivity","LondonDepth","MaterialAxes"])
+        material_mask = material_list[:,] == None
         
+        material_list = material_list[~material_mask]
+        material_labels = material_labels[~material_mask]
+        
+        for i in range(len(material_list)):
+            dict[material_labels[i]] = material_list[i]
+
         return dict
 
     def Postprocessing_Energy(Index,Attributes):
@@ -15,12 +24,43 @@ class Domains:
                  "Attributes":Attributes}
         
         return dict,"Energy"
+        
+    def Postprocessing_Probe(Index,Center):
+        dict  = {"Index":Index,
+                 "Center":Attributes}
+        
+        return dict,"Probe"
 
 class Boundaries:
     
     def PEC(Attributes):
         dict = {"Attributes":Attributes}
         return dict,"PEC"
+    
+    def PMC(Attributes):
+        dict = {"Attributes":Attributes}
+        return dict,"PMC"
+        
+    def Absorbing(Attributes,Order):
+        dict = {"Attributes":Attributes,
+                "Order":Order}
+        return dict,"Absorbing"
+        
+    def Conductivity(Attributes,Conductivity,Permeability,Thickness=None)
+    
+        dict = {"Attributes":Attributes,
+                "Conductivity":Conductivity,
+                "Permeability":Permeability}
+        
+        if Thickness != None:
+            dict["Thickness"] = Thickness
+        
+        return dict,"Conductivity"
+        
+    def Ground(Attributes):
+        dict = {"Attributes":Attributes}
+        return dict,"Ground"
+    
 
     def LumpedPort(Index,Attributes,Direction,R,L,C):
         dict = {"Index":Index,
