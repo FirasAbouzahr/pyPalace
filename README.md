@@ -13,57 +13,90 @@ Any parameters in the builder functions which have **None** as their default val
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Domains (see below).
 
 #### Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None) 
-*Attributes*: Array/list // 
-*Permeability*: float //
-*Permittivity*: float //
-*LossTan*: float //
-*Conductivity*: float //
-*LondonDepth*: float // 
-*MaterialAxes*: array/list //
 
-* Defines the material properities to be assigned to volume blocks/domains from your mesh file.
-* Not optional
+Defines the material properities to be assigned to volume blocks/domains from your mesh file. See [domains["Materials"]](https://awslabs.github.io/palace/stable/config/domains/#domains[%22Materials%22])
+
+* *Attributes*: Array/list 
+* *Permeability*: float 
+* *Permittivity*: float 
+* *LossTan*: float 
+* *Conductivity*: float 
+* *LondonDepth*: float 
+* *MaterialAxes*: array/list 
 
 #### Postprocessing_Energy(Index,Attributes):
-* Computes the electric and magnetic field energies in the specific domain attributes.
-* Optional
+
+Computes the electric and magnetic field energies in the specific domain attributes.
+
+* *Index*: integer
+* *Attributes*: Array/list 
 
 #### Postprocessing_Probe(Index,Center):
-* Computes the electric and magnetic flux density
-* Optional
+Computes the electric and magnetic flux density
+
+* *Index*: integer
+* *Center*: array/list
 
 ### pyPalace.builder.Boundaries
 
-#### PEC(Attributes)
-* Defines which surface blocks/domains should have perfect electric conductor boundary conditions
-* This instance should only be defined once - so put all your 
-
-    
-    def PMC(Attributes):
-        dict = {"Attributes":Attributes}
-        return dict,"PMC"
-        
-    def Absorbing(Attributes,Order):
-        dict = {"Attributes":Attributes,
-                "Order":Order}
-        return dict,"Absorbing"
-        
-    def Conductivity(Attributes,Conductivity,Permeability,Thickness=None)
-    
-        dict = {"Attributes":Attributes,
-                "Conductivity":Conductivity,
-                "Permeability":Permeability}
-        
-        if Thickness != None:
-            dict["Thickness"] = Thickness
-        
-        return dict,"Conductivity"
-        
-    def Ground(Attributes):
-        dict = {"Attributes":Attributes}
-        return dict,"Ground"
-    
-
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Boundaries (see below).
 
+#### PEC(Attributes)
+Defines which surface blocks/domains will have a perfect electric conductor boundary condition.
+
+* *Attributes*: Array/list 
+
+#### PMC(Attributes)
+Defines which surface blocks/domains will have a perfect magnetic conductor boundary condition.
+
+* *Attributes*: Array/list
+
+#### Absorbing(Attributes,Order):
+Defines which surface blocks/domains will have an absorbing boundary condition.
+
+* *Attributes*: Array/list
+* *Order*: integer
+        
+#### Conductivity(Attributes,Conductivity,Permeability,Thickness=None)
+Defines which surface blocks/domains will have a conducting boundary condition.
+
+* *Attributes*: Array/list
+* *Conductivity*: float
+* *Permeability*: float
+* *Thickness*: float
+           
+#### Ground(Attributes)
+Defines which surface blocks/domains will have a grounded boundary condition.
+
+* *Attributes*: Array/list
+
+#### LumpedPort(Index,Attributes,Direction,R,L,C) 
+Defines which surface blocks/domains will have a lumped port boundary condition.
+
+* *Index*: integer
+* *Attributes*: Array/list
+* *Direction*: string or array/list
+* *R*: float
+* *L*: float
+* *C*: float
+
+
+    def Impedance(Attributes,Rs=None,Ls=None,Cs=None):
+
+        dict = {"Attributes":Attributes}
+
+        impedance_list = np.array([Rs,Ls,Cs])
+        impedance_labels = np.array(["Rs","Ls","Cs"])
+        impedance_mask = impedance_list[:,] == None
+
+        impedance_list = impedance_list[~impedance_mask]
+        impedance_labels = impedance_labels[~impedance_mask]
+
+        for i in range(len(impedance_list)):
+            dict[impedance_labels[i]] = impedance_list[i]
+
+        return dict,"Impedance"
+
+    def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
+    
 
