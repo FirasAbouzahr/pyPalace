@@ -13,13 +13,13 @@ Any parameters in the builder functions which have **None** as their default val
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Domains (see below).
 
 #### Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None) 
-*Attributes*: Array/list
-*Permeability*: float
-*Permittivity*: float
-*LossTan*: float
-*Conductivity*: float
-*LondonDepth*: float
-*MaterialAxes*: array/list
+*Attributes*: Array/list // 
+*Permeability*: float //
+*Permittivity*: float //
+*LossTan*: float //
+*Conductivity*: float //
+*LondonDepth*: float // 
+*MaterialAxes*: array/list //
 
 * Defines the material properities to be assigned to volume blocks/domains from your mesh file.
 * Not optional
