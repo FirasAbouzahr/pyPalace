@@ -1,6 +1,6 @@
 # pyPalace
 
-Definitions of function parameters come straight from AWS Palace: [https://awslabs.github.io/palace/stable/](AWS Palace)
+Definitions of function parameters come straight from AWS Palace: [AWS Palace](https://awslabs.github.io/palace/stable/)
 
 ## pyPalace.builder
 
