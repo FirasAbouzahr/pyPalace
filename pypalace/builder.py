@@ -46,7 +46,7 @@ class Boundaries:
                 "Order":Order}
         return dict,"Absorbing"
         
-    def Conductivity(Attributes,Conductivity,Permeability,Thickness=None)
+    def Conductivity(Attributes,Conductivity,Permeability,Thickness=None):
     
         dict = {"Attributes":Attributes,
                 "Conductivity":Conductivity,
