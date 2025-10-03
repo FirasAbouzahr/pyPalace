@@ -1,5 +1,7 @@
 # pyPalace 
 
+pyPalace is a code suite used to generate [AWS Palace](https://awslabs.github.io/palace/stable/) (FEM electromagnetic simulations) config files with python. The main goal of this suite is to allow for a more intuitive, automated, and easy-to-use method of writing Palace config files without the need to actually write json files directly. 
+
 AWS Palace please sponsor me (: 
 
 ## Table of Contents
