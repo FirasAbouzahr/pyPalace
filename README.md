@@ -3,10 +3,10 @@
 AWS Palace please sponsor me (: 
 
 ## Table of Contents
-- [Example](#example): Example of using pyPalace to generate an AWS Palace config file ready for simulation
+- [Eigenmode Example](#eigenmode-example): Example of using pyPalace to generate an AWS Palace config file ready for simulation
 - [Function definitions](#function-definitions): Definition of functions and useful links to AWS Palace's github for more context
 
-# Example
+# Eigenmod Example
 
 Here is an example using pyPalace to create an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single coplanar resonator coupled to a feedline. 
 
@@ -50,7 +50,7 @@ $
 PSHELL  9       100     1     
 ```
 
-Now we can use pyPalace to build corresponding AWS Palace config file. 
+Now we can use pyPalace to build corresponding AWS Palace config file. The example that is discussed below can be found [here](eigenmode_example.py).
 
 Start by importing the pyPalace functions:
 ```python
@@ -60,7 +60,7 @@ from pypalace import Config, Domains, Boundaries, Solver
 Now let's create our Config object, which defines config["Problem"], and also create config["Model"]:
 ```python
 my_sim = Config("Eigenmode",Output="eigenmode_output") # creates config["Problem"]
-my_sim.add_Model("example.bdf") # creates config["Model"], no adaptive mesh refinement
+my_sim.add_Model("eigenmode_example.bdf") # creates config["Model"], no adaptive mesh refinement
 ```
 
 Now we define our materials:
@@ -196,8 +196,10 @@ my_sim.print_config()
 
 If it look's good, we are ready to save it! Note ```save_config()``` will also do a validity check and error out if it finds that you did not make a valid config file (e.g., you're missing an important block):
 ```python
-my_sim.save_config("example.json")
+my_sim.save_config("eigenmode_example.json")
 ```
+
+The config file generated from this can be found [here](eigenmode_example.json).
 
 # Function definitions
 

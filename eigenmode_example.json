@@ -5,122 +5,78 @@
     "Output": "eigenmode_output"
   },
   "Model": {
-    "Mesh": "test.msh",
+    "Mesh": "eigenmode_example.bdf",
     "L0": 1e-06,
-    "Lc": 0.0,
-    "Refinement": {
-      "Tol": 0.01,
-      "MaxIts": 3,
-      "Nonconformal": false,
-      "SaveAdaptMesh": true,
-      "SaveAdaptIterations": true
-    }
+    "Lc": 0.0
   },
   "Domains": {
     "Materials": [
       {
         "Attributes": [
-          8
+          1
         ],
         "Permeability": 1.0,
-        "Permittivity": 11.5,
+        "Permittivity": 11.45,
         "LossTan": 0.0
       },
       {
         "Attributes": [
-          6,
-          7
+          2
         ],
         "Permeability": 1.0,
         "Permittivity": 1.0,
         "LossTan": 0.0
       }
-    ],
-    "Postprocessing": {
-      "Energy": [
-        {
-          "Index": 1,
-          "Attributes": [
-            8
-          ]
-        }
-      ]
-    }
+    ]
   },
   "Boundaries": {
-    "PEC": [
-      {
-        "Attributes": [
-          1,
-          2,
-          3
-        ]
-      }
-    ],
+    "PEC": {
+      "Attributes": [
+        3,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
     "LumpedPort": [
       {
         "Index": 1,
         "Attributes": [
-          9
+          4
         ],
         "Direction": "+X",
-        "R": 50.0,
-        "L": 0.0,
-        "C": 0.0
+        "R": 50,
+        "L": 0,
+        "C": 0
       },
       {
         "Index": 2,
         "Attributes": [
-          10
-        ],
-        "Direction": "-X",
-        "R": 50.0,
-        "L": 0.0,
-        "C": 0.0
-      },
-      {
-        "Index": 3,
-        "Attributes": [
-          11
-        ],
-        "Direction": "-Y",
-        "R": 50.0,
-        "L": 0.0,
-        "C": 0.0
-      },
-      {
-        "Index": 4,
-        "Attributes": [
-          12
-        ],
-        "Direction": "+Y",
-        "R": 50.0,
-        "L": 0.0,
-        "C": 0.0
-      }
-    ],
-    "Impedance": [
-      {
-        "Attributes": [
           5
         ],
-        "Rs": 45440000000.0
+        "Direction": "-X",
+        "R": 50,
+        "L": 0,
+        "C": 0
       }
     ]
   },
   "Solver": {
-    "Order": 2,
+    "Order": 1,
     "Device": "CPU",
     "Eigenmode": {
-      "N": 10,
-      "Save": 10,
+      "N": 5,
+      "Save": 5,
       "Type": "Default",
-      "Target": 2.0,
-      "Tol": 1e-08
+      "Target": 1.0,
+      "Tol": 1e-10
     },
     "Linear": {
       "Type": "Default",
-      "KSPType": "Default"
+      "KSPType": "Default",
+      "Tol": 1e-10,
+      "MaxIts": 10
     }
   }
 }

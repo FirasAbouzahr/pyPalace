@@ -71,29 +71,23 @@ class Config:
     def add_Boundaries(self,BCs,Postprocessing = []):
         self.tracker.append("Boundaries")
         
+        boundary_dict = {}
+        
         BCs = np.array(BCs)
         Postprocessing = np.array(Postprocessing)
-
-        PEC_mask = BCs[:, 1] == 'PEC'
-        LumpedPort_mask = BCs[:, 1] == 'LumpedPort'
-        Impedance_mask = BCs[:, 1] == 'Impedance'
-        Absorbing_mask = BCs[:, 1] == 'Absorbing'
-
-        PECs = BCs[PEC_mask][:,0]
-        LumpedPorts = BCs[LumpedPort_mask][:,0]
-        Impedances = BCs[Impedance_mask][:,0]
-        Absorbings = BCs[Absorbing_mask][:,0]
-
-        boundary_dict = {}
-
-        if len(PECs) != 0:
-            boundary_dict["PEC"] = list(PECs)[0]
-        if len(LumpedPorts) != 0:
-            boundary_dict["LumpedPort"] = list(LumpedPorts)
-        if len(Impedances) != 0:
-            boundary_dict["Impedance"] = list(Impedances)
-        if len(Absorbings) != 0:
-            boundary_dict["Absorbing"] = list(Absorbings)
+        
+        BC_labels = ["PEC","PMC","LumpedPort","Impedance","Absorbing","Ground"]
+        
+        for lab in BC_labels:
+            mask = BCs[:, 1] == lab
+            current = BCs[mask][:,0]
+            
+            if len(current) == 1:
+                boundary_dict[lab] = list(current)[0]
+            elif len(current) >= 1:
+                boundary_dict[lab] = list(current)
+            else:
+                pass
 
         if len(Postprocessing) != 0:
 
