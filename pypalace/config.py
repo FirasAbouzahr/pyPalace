@@ -77,10 +77,12 @@ class Config:
         PEC_mask = BCs[:, 1] == 'PEC'
         LumpedPort_mask = BCs[:, 1] == 'LumpedPort'
         Impedance_mask = BCs[:, 1] == 'Impedance'
+        Absorbing_mask = BCs[:, 1] == 'Absorbing'
 
         PECs = BCs[PEC_mask][:,0]
         LumpedPorts = BCs[LumpedPort_mask][:,0]
         Impedances = BCs[Impedance_mask][:,0]
+        Absorbings = BCs[Absorbing_mask][:,0]
 
         boundary_dict = {}
 
@@ -90,6 +92,8 @@ class Config:
             boundary_dict["LumpedPort"] = list(LumpedPorts)
         if len(Impedances) != 0:
             boundary_dict["Impedance"] = list(Impedances)
+        if len(Absorbings) != 0:
+            boundary_dict["Absorbing"] = list(Absorbings)
 
         if len(Postprocessing) != 0:
 
