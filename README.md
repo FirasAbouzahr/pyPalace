@@ -6,7 +6,7 @@ AWS Palace please sponsor me (:
 - [Eigenmode Example](#eigenmode-example): Example of using pyPalace to generate an AWS Palace config file ready for simulation
 - [Function definitions](#function-definitions): Definition of functions and useful links to AWS Palace's github for more context
 
-# Eigenmod Example
+# Eigenmode Example
 
 Here is an example using pyPalace to create an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single coplanar resonator coupled to a feedline. 
 
