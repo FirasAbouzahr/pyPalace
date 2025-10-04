@@ -20,7 +20,7 @@ The mesh file for this device has the following domain/block definitions:
 | air           | 2 |
 | resonator     | 3 |
 | port1         | 4 |
-| port3         | 5 |
+| port2         | 5 |
 | fair_field    | 6 |
 | feedline      | 7 |
 | ground_plane1 | 8 |
