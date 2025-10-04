@@ -181,13 +181,13 @@ The config file generated from this can be found [here](eigenmode_example.json).
 
 ## pyPalace.builder
 
-builder functions are used to define blocks that go into the 5 main components of a Palace configuration file: config["Problem"],config["Model"],config["Domains"],config["Boundaries"],config["Solver"]
+The builder classes (Domains, Boundaries, Solver) are used to define blocks that go into the config["Domains"],config["Boundaries"], and config["Solver"]
 
 Definitions of function parameters come straight from [AWS Palace](https://awslabs.github.io/palace/stable/). So I won't go over specifics of parameters here in too much details. Some functions are still missing and/or incomplete (e.g., Lumped Port does not yet take Rs,Ls,Cs values). This is a work in progress.
 
 Any parameters in the builder functions which have **None** as their default values will not be included in the config file and hence will revert to their default values set by Palace unless specificed expliticly in the function calls. See the example below.
 
-### pyPalace.builder.Domains
+### Domains
 
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Domains (see below).
 
@@ -220,7 +220,7 @@ Computes the electric and magnetic flux density. See [domains["Postprocessing"][
 * **Index** (list) - Index to identify this domain in postprocessing output files
 * **Center** (list) - Coordinates of probe in mesh units
 
-### pyPalace.builder.Boundaries
+### Boundaries
 
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Boundaries (see below).
 
@@ -297,7 +297,7 @@ Calculates interface dielectric loss at surfaces. See see [boundaries["Postproce
 * **Permittivity** (float) - Dielectric permittivity
 * **LossTan** (float) - Loss tangent
 
-### pyPalace.builder.Solver
+### Solver
 
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Solver (see below).
 ```python
@@ -324,6 +324,8 @@ Defines linear algebra hyperparameters. See [solver["Linear"]](https://awslabs.g
 * **MaxIts** (integer) - Maximum number of iterations for linear solver
 * **MaxSize** (integer) -  Maximum Krylov space size for the GMRES and FGMRES solvers
 
+## pyPalace.Config
+
 ```python
 pyPalace.Config(Type,Verbose=2,Output="sim_output")
 ```
@@ -336,7 +338,6 @@ Config obejct starts a new AWS Palace config file and will also specificy the co
 ```python
 add_Model(Mesh,L0=1.0e-6,Lc=0.0,Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,SaveAdaptMesh=None,SaveAdaptIterations=None)
 ```
-
 Defines config["Model"]. See [config["Model"]](https://awslabs.github.io/palace/stable/config/model/).
 
 * **Mesh** (string) - Mesh file name
