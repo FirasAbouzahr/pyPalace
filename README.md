@@ -12,45 +12,19 @@ AWS Palace please sponsor me (:
 
 Here is an example using pyPalace to create an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single coplanar resonator coupled to a feedline. 
 
-The end of the mesh file (.bdf) has the following block/domain definitions:
+The mesh file for this device has the following domain/block definitions:
 
-```
-$ Name: substrate
-$
-PSOLID  1       100     0       
-$
-$ Name: air
-$
-PSOLID  2       100     0       
-$
-$ Name: resonator
-$
-PSHELL  3       100     1       
-$
-$ Name: port1
-$
-PSHELL  4       100     1       
-$
-$ Name: port2
-$
-PSHELL  5       100     1       
-$
-$ Name: far_field
-$
-PSHELL  6       100     1       
-$
-$ Name: feedline
-$
-PSHELL  7       100     1       
-$
-$ Name: ground_plane1
-$
-PSHELL  8       100     1       
-$
-$ Name: ground_plane2
-$
-PSHELL  9       100     1     
-```
+| Name          | ID |
+| --------------|---|
+| substrate     | 1 |
+| air           | 2 |
+| resonator     | 3 |
+| port1         | 4 |
+| port3         | 5 |
+| fair_field    | 6 |
+| feedline      | 7 |
+| ground_plane1 | 8 |
+| ground_plane2 | 9 |
 
 Now we can use pyPalace to build corresponding AWS Palace config file. The example that is discussed below can be found [here](eigenmode_example.py).
 
