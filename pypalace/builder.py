@@ -99,6 +99,13 @@ class Boundaries:
         return dict,"Dielectric"
 
 class Solver:
+    
+    def Electrostatic(N):
+        return {"N":N}
+    
+    def Magnetostatic(N):
+        return {"N":N}
+
     def Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
 
         eigenmode_dict = {"N":N,
@@ -116,6 +123,45 @@ class Solver:
             eigenmode_dict[eigenmode_labels[i]] = eigenmode_list[i]
 
         return eigenmode_dict,"Eigenmode"
+        
+    
+    def Driven(MinFreq=None,MaxFreq=None,FreqStep=None,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
+        
+        driven_dict = {}
+        
+        if AdaptiveTol == None and (Restart != None or AdaptiveMaxSamples != None or AdaptiveConvergenceMemory != None):
+            print("AdaptiveTol not set, ignoring adaptive frequency sweep")
+            AdaptiveTol,Restart,AdaptiveMaxSamples,AdaptiveConvergenceMemory = None,None,None,None
+        
+    
+        driven_list = np.array([MinFreq,MaxFreq,FreqStep,SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory])
+        driven_labels = np.array(["MinFreq","MaxFreq","FreqStep","SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory"])
+        driven_mask = driven_list[:,] == None
+        
+        driven_list = driven_list[~driven_mask]
+        driven_labels = driven_labels[~driven_mask]
+
+        for i in range(len(driven_list)):
+            driven_dict[driven_labels[i]] = driven_list[i]
+
+        return driven_dict,"Driven"
+    
+    def Driven_Samples(Type=None,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddtoPROM=None):
+        
+        samples_dict = {}
+        
+        samples_list = np.array([Type,MinFreq,MaxFreq,FreqStep,NSample,Freq,SaveStep,AddtoPROM])
+        samples_labels = np.array(["Type","MinFreq","MaxFreq","FreqStep","NSample","Freq","SaveStep","AddtoPROM"])
+        samples_mask = samples_list[:,] == None
+        
+        samples_list = samples_list[~samples_mask]
+        samples_labels = samples_labels[~samples_mask]
+
+        for i in range(len(samples_list)):
+            samples_dict[samples_labels[i]] = samples_list[i]
+        
+        return samples_dict
+        
 
     def Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
 
