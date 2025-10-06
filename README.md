@@ -1,54 +1,30 @@
 # pyPalace 
 
+pyPalace is a code suite used to generate [AWS Palace](https://awslabs.github.io/palace/stable/) (FEM electromagnetic simulations) config files with python. The main goal of this suite is to allow for a more intuitive, automated, and easy-to-use method of writing Palace config files without the need to actually write json files directly. 
+
 AWS Palace please sponsor me (: 
 
 ## Table of Contents
 - [Eigenmode Example](#eigenmode-example): Example of using pyPalace to generate an AWS Palace config file ready for simulation
 - [Function definitions](#function-definitions): Definition of functions and useful links to AWS Palace's github for more context
 
-# Eigenmod Example
+# Eigenmode Example
 
 Here is an example using pyPalace to create an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single coplanar resonator coupled to a feedline. 
 
-The end of the mesh file (.bdf) has the following block/domain definitions:
+The mesh file for this device has the following domain/block definitions:
 
-```
-$ Name: substrate
-$
-PSOLID  1       100     0       
-$
-$ Name: air
-$
-PSOLID  2       100     0       
-$
-$ Name: resonator
-$
-PSHELL  3       100     1       
-$
-$ Name: port1
-$
-PSHELL  4       100     1       
-$
-$ Name: port2
-$
-PSHELL  5       100     1       
-$
-$ Name: far_field
-$
-PSHELL  6       100     1       
-$
-$ Name: feedline
-$
-PSHELL  7       100     1       
-$
-$ Name: ground_plane1
-$
-PSHELL  8       100     1       
-$
-$ Name: ground_plane2
-$
-PSHELL  9       100     1     
-```
+| Name          | ID |
+| --------------|---|
+| substrate     | 1 |
+| air           | 2 |
+| resonator     | 3 |
+| port1         | 4 |
+| port2         | 5 |
+| fair_field    | 6 |
+| feedline      | 7 |
+| ground_plane1 | 8 |
+| ground_plane2 | 9 |
 
 Now we can use pyPalace to build corresponding AWS Palace config file. The example that is discussed below can be found [here](eigenmode_example.py).
 
@@ -205,191 +181,216 @@ The config file generated from this can be found [here](eigenmode_example.json).
 
 ## pyPalace.builder
 
-builder functions are used to define blocks that go into the 5 main components of a Palace configuration file: config["Problem"],config["Model"],config["Domains"],config["Boundaries"],config["Solver"]
+The builder classes (Domains, Boundaries, Solver) are used to define blocks that go into the config["Domains"],config["Boundaries"], and config["Solver"]
 
 Definitions of function parameters come straight from [AWS Palace](https://awslabs.github.io/palace/stable/). So I won't go over specifics of parameters here in too much details. Some functions are still missing and/or incomplete (e.g., Lumped Port does not yet take Rs,Ls,Cs values). This is a work in progress.
 
 Any parameters in the builder functions which have **None** as their default values will not be included in the config file and hence will revert to their default values set by Palace unless specificed expliticly in the function calls. See the example below.
 
-### pyPalace.builder.Domains
+### Domains
 
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Domains (see below).
 
-#### Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None) 
-
+```python
+Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None) 
+```
 Defines the material properities to be assigned to volume blocks/domains from your mesh file. See [domains["Materials"]](https://awslabs.github.io/palace/stable/config/domains/#domains[%22Materials%22])
 
-* *Attributes*: Array/list 
-* *Permeability*: float 
-* *Permittivity*: float 
-* *LossTan*: float 
-* *Conductivity*: float 
-* *LondonDepth*: float 
-* *MaterialAxes*: array/list 
+* **Attributes** (list) - ID(s) of mesh domain(s) 
+* **Permeability* (float) - Magnetic permeability
+* **Permittivity** (float) - Dielectric permittivity
+* **LossTan** (float,optional) - Loss tangent
+* **Conductivity** (float,optional) - Electric conductivity
+* **LondonDepth** (float,optional) - London penatration depth
+* **MaterialAxes** (list,optional) - Axes directions for anisotropic materials
 
-#### Postprocessing_Energy(Index,Attributes):
-
+```python
+Postprocessing_Energy(Index,Attributes):
+```
 Computes the electric and magnetic field energies in the specific domain attributes. See [domains["Postprocessing"]["Energy"]](https://awslabs.github.io/palace/stable/config/domains/#domains[%22Postprocessing%22][%22Energy%22])
 
-* *Index*: integer
-* *Attributes*: Array/list 
+* **Index** (list) - Index to identify this domain in postprocessing output files
+* **Attributes** (list) - ID(s) of mesh domain(s) 
 
-#### Postprocessing_Probe(Index,Center):
+```python
+Postprocessing_Probe(Index,Center):
+```
 Computes the electric and magnetic flux density. See [domains["Postprocessing"]["Probe"]](https://awslabs.github.io/palace/stable/config/domains/#domains[%22Postprocessing%22][%22Probe%22])
 
-* *Index*: integer
-* *Center*: array/list
+* **Index** (list) - Index to identify this domain in postprocessing output files
+* **Center** (list) - Coordinates of probe in mesh units
 
-### pyPalace.builder.Boundaries
+### Boundaries
 
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Boundaries (see below).
 
-#### PEC(Attributes)
+```python
+PEC(Attributes)
+```
 Defines which surface blocks/domains will have a perfect electric conductor boundary condition. See [boundaries["PEC"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22PEC%22])
 
-* *Attributes*: Array/list 
+* **Attributes** (list) - ID(s) of mesh domain(s) 
 
-#### PMC(Attributes)
+```python
+PMC(Attributes)
+```
 Defines which surface blocks/domains will have a perfect magnetic conductor boundary condition. See [boundaries["PMC"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22PMC%22])
 
-* *Attributes*: Array/list
+* **Attributes** (list) - ID(s) of mesh domain(s) 
 
-#### Absorbing(Attributes,Order):
+```python
+Absorbing(Attributes,Order):
+```
 Defines which surface blocks/domains will have an absorbing boundary condition. See [boundaries["Absorbing"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22Absorbing%22])
 
-* *Attributes*: Array/list
-* *Order*: integer
+* **Attributes** (list) - ID(s) of mesh domain(s) 
+* **Order** (1 or 2) - first or second order approximation of far field absorbing boundary condition
         
-#### Conductivity(Attributes,Conductivity,Permeability,Thickness=None)
+```python
+Conductivity(Attributes,Conductivity,Permeability,Thickness=None)
+```
 Defines which surface blocks/domains will have a conducting boundary condition. See [boundaries["Conductivity"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22Conductivity%22])
 
-* *Attributes*: Array/list
-* *Conductivity*: float
-* *Permeability*: float
-* *Thickness*: float
+* **Attributes** (list) - ID(s) of mesh domain(s)
+* **Conductivity** (float,optional) - Electric conductivity
+* **Permeability** (float) - Magnetic permeability
+* **Thickness** (float,optional) - Conductor thickness in mesh units
            
-#### Ground(Attributes)
+```python
+Ground(Attributes)
+```
 Defines which surface blocks/domains will have a grounded boundary condition. See [boundaries["Ground"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22Ground%22])
 
-* *Attributes*: Array/list
+* **Attributes** (list) - ID(s) of mesh domain(s) 
 
-#### LumpedPort(Index,Attributes,Direction,R,L,C) 
+```python
+LumpedPort(Index,Attributes,Direction,R,L,C)
+```
 Defines which surface blocks/domains will have a lumped port boundary condition. See [boundaries["LumpedPort"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22LumpedPort%22])
 
-* *Index*: integer
-* *Attributes*: Array/list
-* *Direction*: string or array/list
-* *R*: float
-* *L*: float
-* *C*: float
+* **Index** (list) - Index for postprocessing
+* **Attributes** (list) - ID(s) of mesh domain(s) 
+* **Direction** (string or list) - ID(s) of mesh domain(s) 
+* **R** (float) - Circuit resistance
+* **L** (float) - Circuit inductance
+* **C** (float) - Circuit capactiance
 
-#### Impedance(Attributes,Rs=None,Ls=None,Cs=None):
-
+```python
+Impedance(Attributes,Rs=None,Ls=None,Cs=None)
+```
 Defines which surface blocks/domains will have a impedance condition. See [boundaries["Impedance"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22Impedance%22])
 
-* *Attributes*: Array/list
-* *Rs*: float
-* *Ls*: float
-* *Cs*: float
+* **Attributes** (list) - ID(s) of mesh domain(s) 
+* **R** (float) - Surface resistance
+* **L** (float) - Surface inductance
+* **C** (float) - Surface capactiance
 
-#### Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
-
+```python
+Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
+```
 Calculates interface dielectric loss at surfaces. See see [boundaries["Postprocessing"]["Dielectric"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22Postprocessing%22][%22Dielectric%22]) 
 
-* *Index*: integer
-* *Attributes*: Array/list
-* *Type*: string
-* *Thickness*: float
-* *Permittivity*: float
-* *LossTan*: float
+* **Index** (list) - Index to identify this domain in postprocessing output files
+* **Attributes** (list) - ID(s) of mesh domain(s)
+* **Type** (string) - Type of dielectric interface for energy participation ratio (EPR) calculations
+* **Thickness** (integer) - Thickness of dielectric interface in mesh units
+* **Permittivity** (float) - Dielectric permittivity
+* **LossTan** (float) - Loss tangent
 
-### pyPalace.builder.Solver
+### Solver
 
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Solver (see below).
-
-#### Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
-
+```python
+Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
+```
 Defines eigenmode hyperparameters. See [solver["Eigenmode"]](https://awslabs.github.io/palace/stable/config/solver/#solver[%22Eigenmode%22])
 
-* *Target*: float
-* *Tol*: float
-* *MaxIts* integer
-* *MaxSize* integer
-* *N*: integer
-* *Save* integer
-* *Type*: string
+* **Target** (float) - Frequency target above which to search for eigenmode frequency
+* **Tol** (float) - Convergence tolerance for eigenmode solver
+* **MaxIts** (integer) - Maximum number of iterations for eigenmode solver
+* **MaxSize** (integer) - Maximum subspace size
+* **N** (integer) - Number of eigenmodes to compute
+* **Save** (integer) - Number of eigenmodes to save
+* **Type** (string) - Eigenvalue solver type
 
-
-#### Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
-
+```python
+Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
+```
 Defines linear algebra hyperparameters. See [solver["Linear"]](https://awslabs.github.io/palace/stable/config/solver/#solver[%22Linear%22])
 
-* *Type*: string
-* *KSPType*: string
-* *Tol*: float
-* *MaxIts*: integer
-* *MaxSize*: integer
+* **Type** (string) - Solver type for preconditioning system of equations
+* **KSPType** (string) - Krylov subspace solver type
+* **Tol** (float) - Residual convergence tolerance
+* **MaxIts** (integer) - Maximum number of iterations for linear solver
+* **MaxSize** (integer) -  Maximum Krylov space size for the GMRES and FGMRES solvers
 
-## pyPalace.Config(Type,Verbose=2,Output="sim_output")
+## pyPalace.Config
 
+```python
+pyPalace.Config(Type,Verbose=2,Output="sim_output")
+```
 Config obejct starts a new AWS Palace config file and will also specificy the config["Problem"] block in it. See [config["Problem"]](https://awslabs.github.io/palace/stable/config/problem/)
 
-* *Type*: string
-* *Verbose*: integer
-* *Output*: string
+* **Type** (string) - Simulation type
+* **Verbose** (integer) - Verbosity of output
+* **Output** (string) - Name of out output file to save results to
 
-#### add_Model(Mesh,L0=1.0e-6,Lc=0.0,Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,SaveAdaptMesh=None,SaveAdaptIterations=None)
+```python
+add_Model(Mesh,L0=1.0e-6,Lc=0.0,Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,SaveAdaptMesh=None,SaveAdaptIterations=None)
+```
+Defines config["Model"]. See [config["Model"]](https://awslabs.github.io/palace/stable/config/model/).
 
-Defines config["Model"]. See [config["Model"]](https://awslabs.github.io/palace/stable/config/model/)
+* **Mesh** (string) - Mesh file name
+* **L0** (float) - Units of mesh unit relative to 1 meter.
+* **Lc** (float) - Characteristic length scale used for nondimensionalization, specified in mesh length units
 
-* *Mesh*: string
-* *L0*: float
-* *Lc*: float
-* *Tol*: float
-* *MaxIts*: integer
-* *MaxSize* integer
-* *Nonconformal*: boolean
-* *UpdateFraction*: boolean
-* *UniformLevels*: integer
-* *SaveAdaptMesh*: boolean
-* *SaveAdaptIterations*: boolean
+The below options are for adapative mesh refinement, see [model["Refinement"]](https://awslabs.github.io/palace/stable/config/model/#model[%22Refinement%22]).
 
-#### add_Domains(Materials,Postprocessing = []):
+* **Tol** (float) - Convergence tolerance for adapative mesh refinement iterations
+* **MaxIts** (integer) - Maximum number of adapative mesh refinement iterations
+* **MaxSize** (integer) - Maximum degrees of freedom for adapative mesh refinement
+* **Nonconformal** (boolean) - Choose if adaptive mesh refinement is nonconformal or not
+* **UpdateFraction** (float) - Marking fraction used to choose which elements to refine
+* **UniformLevels** (integer) - Levels of uniform parallel mesh refinement
+* **SaveAdaptMesh** (boolean) - Choose to save refined mesh
+* **SaveAdaptIterations** (boolean) - Choose to save results from each iteration of adapative mesh refinement
 
+```python
+add_Domains(Materials,Postprocessing = []):
+```
 adds domains["Materials"] and domains["Postprocessing"] to the palace config file as defined using pyPalace.builder.Domains.
 
-* *Materials*: array/list
-  - list of your materials definitions
-* *Postprocessing*: array/list
-  - list of your Domains postprocessing definitions
+* **Materials** (list) - List of materials to add to config file
+* **Postprocessing** (list) - List of domain postprocessings to add to config file
 
-#### add_Boundaries(BCs,Postprocessing = []):
-
+```python
+add_Boundaries(BCs,Postprocessing = []):
+```
 adds config["Boundaries"] and boundaries["Postprocessing"] to the palace config file as defined using pyPalace.builder.Boundaries.
 
-* *BCs*: array/list 
-  - list of your boundary condition definitions
-* *Postprocessing*: array/list
-  - list of your Boundaries postprocessing definitions
+* **Materials** (list) - List of boundary conditions to add to config file
+* **Postprocessing** (list) - List of boundaries postprocessings to add to config file
 
-#### add_Solver(Simulation,Order=1,Device="CPU",Linear=None)
-
+```python
+add_Solver(Simulation,Order=1,Device="CPU",Linear=None)
+```
 adds config["Solver"], solver["<simulation_type>"], and solver["Solver"]["Linear"]. 
 
-* *Simulation*: ouput from pyPalace.builder.Solver.<sim_type>
-* *Order*: integer
-* *Device*: string
-* *Linear*: ouput from pyPalace.builder.Solver.Linear
+* **Simulation** (ouput from ```pyPalace.builder.Solver.<sim_type>```) - Adds specified simulation hyperparameters
+* **Order** (integer) - Order of simulation solver
+* **Device** (string) - Device to run simulation on
+* **Linear** (ouput from ```pyPalace.builder.Solver.Linear```) - Adds specified linear solver hyperparameters
 
-#### save_config(config_name,check_validity = True):
-
+```python
+save_config(config_name,check_validity = True):
+```
 saves your AWS Palace config file.
-* *Simulation*: string
-  - name you want your config file to have
-* *check_validity*: boolean
-  - if True, checks to see if the config object and hence the file your are trying to save is valid.
 
-#### print_config()
+* **config_name** (boolena) - Name of config file to save as
+* **check_validity** (boolean) - Choose if you want to check your config file is valid
 
+```python
+print_config()
+```
 prints config file as a string so you can view it
 
