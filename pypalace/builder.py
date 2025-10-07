@@ -62,15 +62,31 @@ class Boundaries:
         return dict,"Ground"
     
 
-    def LumpedPort(Index,Attributes,Direction,R,L,C):
+    def LumpedPort(Index,Attributes,Direction=None,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
+    
         dict = {"Index":Index,
-                "Attributes":Attributes,
-                "Direction":Direction,
-                "R":R,
-                "L":L,
-                "C":C}
-        
+                "Attributes":Attributes}
+                
+        if (R != None or L != None or C != None) and (Rs != None or Ls != None or Cs != None):
+            raise ValueError("Cannot combine both circuit (R,L,C) and surface (Rs,Ls,Cs) parameters")
+            
+        if Direction != None and Elements != None:
+            raise ValueError("Cannot use both Direction and Elements")
+
+        LP_list = np.array([Direction,CoordinateSystem,Excitation,Active,R,L,C,Rs,Ls,Cs,Elements])
+        LP_labels = np.array(["Direction","CoordinateSystem","Excitation","Active","R","L","C","Rs","Ls","Cs","Elements"])
+        LP_mask = LP_list[:,] == None
+
+        LP_list = LP_list[~LP_mask]
+        LP_labels = LP_labels[~LP_mask]
+
+        for i in range(len(LP_list)):
+            dict[LP_labels[i]] = LP_list[i]
+
         return dict,"LumpedPort"
+        
+    def LumpedPort_Elements(work_in_progress):
+        pass
 
     def Impedance(Attributes,Rs=None,Ls=None,Cs=None):
 
