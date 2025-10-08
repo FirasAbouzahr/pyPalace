@@ -223,8 +223,8 @@ Refinement_Spheres(Levels,Center,Radius)
 Defines sphere region for focused adapative mesh refinement. Used as an input for pyPalace.Model.Refinement(...,Spheres,...)
 
 * **Levels** (integer) - Level of parallel mesh refinement inside box region.
-* **Center** (list) - Center of refinement sphere region, specificed in mesh units.
-* **Radius** (list) - Radius of refinement sphere region, specificed in mesh units.
+* **Center** (float) - Center of refinement sphere region, specificed in mesh units.
+* **Radius** (float) - Radius of refinement sphere region, specificed in mesh units.
 
 ## pyPalace.Domains
 
