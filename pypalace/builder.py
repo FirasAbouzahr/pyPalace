@@ -1,5 +1,30 @@
 import numpy as np
 
+
+class Model:
+
+    def Refinement(Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,Boxes=None,Spheres=None,SaveAdaptMesh=None,SaveAdaptIterations=None):
+        
+        refinement_list = np.array([Tol,MaxIts,MaxSize,Nonconformal,UpdateFraction,UniformLevels,Boxes,Spheres,SaveAdaptMesh,SaveAdaptIterations])
+        refinement_labels = np.array(["Tol","MaxIts","MaxSize","Nonconformal","UpdateFraction","UniformLevels","Boxes","Spheres","SaveAdaptMesh","SaveAdaptIterations"])
+        refinement_mask = refinement_list[:,] == None
+
+        refinement_list = refinement_list[~refinement_mask]
+        refinement_labels = refinement_labels[~refinement_mask]
+
+        refinement_dict = {}
+        
+        for i in range(len(refinement_list)):
+            refinement_dict[refinement_labels[i]] = refinement_list[i]
+        
+        return refinement_dict
+    
+    def Refinement_Boxes(Levels,BoundingBoxMin,BoundingBoxMax):
+        return {"Levels":Levels,"BoundingBoxMin":BoundingBoxMin,"BoundingBoxMax":BoundingBoxMax}
+    
+    def Refinement_Spheres(Levels,Center,Radius):
+        return {"Levels":Levels,"Center":Center,"Radius":Radius}
+
 class Domains:
     
     def Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None):
@@ -122,7 +147,7 @@ class Solver:
     def Magnetostatic(N):
         return {"N":N}
 
-    def Eigenmode(Target=None,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
+    def Eigenmode(Target,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
 
         eigenmode_dict = {"N":N,
                           "Save":Save,

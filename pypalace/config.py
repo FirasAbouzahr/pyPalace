@@ -14,28 +14,18 @@ class Config:
                       "Output":Output
                      }
                     }
-    def add_Model(self,Mesh,L0=1.0e-6,Lc=0.0,Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,SaveAdaptMesh=None,SaveAdaptIterations=None):
+    def add_Model(self,Mesh,L0=1.0e-6,Lc=None,Refinement=None):
 
         self.tracker.append("Model")
         
         model_dict = {"Mesh":Mesh,
-                      "L0":L0,
-                      "Lc":Lc}
-
-        refinement_list = np.array([Tol,MaxIts,MaxSize,Nonconformal,UpdateFraction,UniformLevels,SaveAdaptMesh,SaveAdaptIterations])
-        refinement_labels = np.array(["Tol","MaxIts","MaxSize","Nonconformal","UpdateFraction","UniformLevels","SaveAdaptMesh","SaveAdaptIterations"])
-        refinement_mask = refinement_list[:,] == None
-
-        refinement_list = refinement_list[~refinement_mask]
-        refinement_labels = refinement_labels[~refinement_mask]
-
-        refinement_dict = {}
+                      "L0":L0}
         
-        for i in range(len(refinement_list)):
-            refinement_dict[refinement_labels[i]] = refinement_list[i]
-
-        if len(refinement_dict) != 0:
-            model_dict["Refinement"] = refinement_dict
+        if Lc != None:
+            model_dict["Lc"] = Lc
+        
+        if Refinement != None:
+            model_dict["Refinement"] = Refinement
 
         self.sim["Model"] = model_dict
 

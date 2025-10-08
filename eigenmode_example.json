@@ -6,8 +6,7 @@
   },
   "Model": {
     "Mesh": "eigenmode_example.bdf",
-    "L0": 1e-06,
-    "Lc": 0.0
+    "L0": 1e-06
   },
   "Domains": {
     "Materials": [
