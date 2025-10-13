@@ -72,8 +72,10 @@ class Config:
             mask = BCs[:, 1] == lab
             current = BCs[mask][:,0]
             
-            if len(current) == 1:
+            if len(current) == 1 and lab != ("LumpedPort" or "Impedance"):
                 boundary_dict[lab] = list(current)[0]
+            elif len(current) == 1 and lab == ("LumpedPort" or "Impedance"):
+                boundary_dict[lab] = list(current)
             elif len(current) >= 1:
                 boundary_dict[lab] = list(current)
             else:
