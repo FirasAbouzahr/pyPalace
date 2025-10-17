@@ -110,9 +110,25 @@ class Boundaries:
 
         return dict,"LumpedPort"
         
-    def LumpedPort_Elements(work_in_progress):
-        pass
+    def LumpedPort_Elements(Attributes,Direction,CoordinateSystem):
+        return {"Attributes":Attributes,"Direction":Direction,"CoordinateSystem":CoordinateSystem}
+        
+    def WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None):
+        dict = {"Index":Index,
+                "Attributes":Attributes}
 
+        WP_list = np.array([Excitation,Active,Mode,Offset,SolverType,MaxIts,KSPTol,EigenTol,Verbose])
+        WP_labels = np.array(["Excitation","Active","Mode","Offset","SolverType","MaxIts","KSPTol","EigenTol","Verbose"])
+        WP_mask = WP_list[:,] == None
+
+        WP_list = WP_list[~WP_mask]
+        WP_labels = WP_labels[~WP_mask]
+
+        for i in range(len(WP_list)):
+            dict[WP_labels[i]] = WP_list[i]
+
+        return dict,"WavePort"
+    
     def Impedance(Attributes,Rs=None,Ls=None,Cs=None):
 
         dict = {"Attributes":Attributes}

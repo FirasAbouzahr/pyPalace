@@ -18,6 +18,7 @@ class Config:
 
         self.tracker.append("Model")
         
+        postprocessing_dict = {}
         model_dict = {"Mesh":Mesh,
                       "L0":L0}
         
@@ -35,72 +36,62 @@ class Config:
         domain_dict = {}
 
         domain_dict["Materials"] = list(Materials)
-
+        
+        Postprocessing_labels = ["Energy","Probe"]
+        
         if len(Postprocessing) != 0:
+            for lab in Postprocessing_labels:
 
-            postprocessing_dict = {}
-            
-            Postprocessing = np.array(Postprocessing)
+                mask = Postprocessing[:, 1] == lab
+                current = Postprocessing[mask][:,0]
 
-            Energy_mask = Postprocessing[:, 1] == 'Energy'
-            Probe_mask = Postprocessing[:, 1] == 'Probe'
+                if len(current) != 0:
+                    postprocessing_dict[lab] = list(current)
 
-            Energeies = Postprocessing[Energy_mask][:,0]
-            Probes = Postprocessing[Probe_mask][:,0]
-
-            if len(Energeies) != 0:
-                postprocessing_dict["Energy"] = list(Energeies)
-                
-            if len(Probes) != 0:
-                postprocessing_dict["Probe"] = list(Probes)
-
-            domain_dict["Postprocessing"] = postprocessing_dict
+                domain_dict["Postprocessing"] = postprocessing_dict
 
         self.sim["Domains"] = domain_dict
         
     def add_Boundaries(self,BCs,Postprocessing = []):
         self.tracker.append("Boundaries")
         
+        postprocessing_dict = {}
         boundary_dict = {}
         
         BCs = np.array(BCs)
         Postprocessing = np.array(Postprocessing)
         
-        BC_labels = ["PEC","PMC","LumpedPort","Impedance","Absorbing","Ground"]
+        BC_labels_scalartype = ["PEC","PMC","Absorbing","WavePortPEC","Ground","ZeroCharge"]
+        BC_labels_arraytype = ["Impedance","Conductivity","LumpedPort","WavePort","SurfaceCurrent","Terminal","Periodic","FloquetWaveVector"]
+
         
-        for lab in BC_labels:
+        for lab in BC_labels_scalartype:
             mask = BCs[:, 1] == lab
             current = BCs[mask][:,0]
             
-            if len(current) == 1 and lab != ("LumpedPort" or "Impedance"):
+            if len(current) == 1:
                 boundary_dict[lab] = list(current)[0]
-            elif len(current) == 1 and lab == ("LumpedPort" or "Impedance"):
-                boundary_dict[lab] = list(current)
-            elif len(current) >= 1:
-                boundary_dict[lab] = list(current)
-            else:
-                pass
-
-        if len(Postprocessing) != 0:
-
-            postprocessing_dict = {}
+        
+        for lab in BC_labels_arraytype:
+            mask = BCs[:, 1] == lab
+            current = BCs[mask][:,0]
             
-            Postprocessing = np.array(Postprocessing)
-
-            SurfaceFlux_mask = Postprocessing[:, 1] == 'SurfaceFlux'
-            Dielectric_mask = Postprocessing[:, 1] == 'Dielectric'
-
-            SurfaceFluxes = Postprocessing[SurfaceFlux_mask][:,0]
-            Dielectrics = Postprocessing[Dielectric_mask][:,0]
-
-            if len(SurfaceFluxes) != 0:
-                postprocessing_dict["SurfaceFlux"] = list(SurfaceFluxes)
+            if len(current) != 0:
+                boundary_dict[lab] = list(current)
+        
+        Postprocessing_labels = ["SurfaceFlux","Dielectric"]
+        
+        if len(Postprocessing) != 0:
+            for lab in Postprocessing_labels:
+            
+                mask = Postprocessing[:, 1] == lab
+                current = Postprocessing[mask][:,0]
                 
-            if len(Dielectrics) != 0:
-                postprocessing_dict["Dielectric"] = list(Dielectrics)
-
+                if len(current) != 0:
+                    postprocessing_dict[lab] = list(current)
+            
             boundary_dict["Postprocessing"] = postprocessing_dict
-
+            
         self.sim["Boundaries"] = boundary_dict
 
     def add_Solver(self,Simulation,Order=1,Device="CPU",Linear=None):
