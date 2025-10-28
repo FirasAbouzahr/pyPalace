@@ -32,15 +32,16 @@ class Domains:
                 "Permeability":Permeability,
                 "Permittivity":Permittivity}
                 
-        material_list = np.array([LossTan,Conductivity,LondonDepth,MaterialAxes])
-        material_labels = np.array(["LossTan","Conductivity","LondonDepth","MaterialAxes"])
-        material_mask = material_list[:,] == None
+        material_list = [LossTan,Conductivity,LondonDepth,MaterialAxes]
+        material_labels = ["LossTan","Conductivity","LondonDepth","MaterialAxes"]
+        new_material_list = []
+        new_material_labels = []
         
-        material_list = material_list[~material_mask]
-        material_labels = material_labels[~material_mask]
-        
-        for i in range(len(material_list)):
-            dict[material_labels[i]] = material_list[i]
+        for i,j in zip(material_list,material_labels): # silly numpy made me hardcode this
+            if i == None:
+                pass
+            else:
+                dict[j] = i
 
         return dict
 
