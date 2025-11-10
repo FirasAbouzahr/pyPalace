@@ -34,7 +34,7 @@ my_attributes
 
 This will output the following pandas dataframe:
 
-![Logo](Figures/attributes_dataframe.png)
+<img src="Figures/attributes_dataframe.png" width="400">
 
 Now that we can conviently see all of the geometry attributes, we are ready to build our AWS Palace config file to simulate this device. The example shown below can be found [here](eigenmode_example.py).
 
