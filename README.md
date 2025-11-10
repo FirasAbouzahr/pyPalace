@@ -18,26 +18,25 @@ Aspects of pyPalace that are in progress:
 
 Here is an example using pyPalace to create an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single coplanar resonator coupled to a feedline. 
 
-The mesh file for this device has the following domain/block definitions:
+We start by importing pyPalace:
 
-| Name          | ID |
-| --------------|---|
-| substrate     | 1 |
-| air           | 2 |
-| resonator     | 3 |
-| port1         | 4 |
-| port2         | 5 |
-| fair_field    | 6 |
-| feedline      | 7 |
-| ground_plane1 | 8 |
-| ground_plane2 | 9 |
-
-Now we can use pyPalace to build corresponding AWS Palace config file. The example that is discussed below can be found [here](eigenmode_example.py).
-
-Start by importing the pyPalace functions:
 ```python
-from pypalace import Config, Domains, Boundaries, Solver
+from pypalace import Config, Simulation, Domains, Boundaries, Solver
 ```
+
+First, let's use ```Simulation.get_mesh_attributes()``` to print a dataframe of the attributes defined in our mesh file - this will help us define the config file in just a bit.
+
+```python
+meshfile = "resonator_example.bdf"
+my_attributes = Simulation.get_mesh_attributes(meshfile) # accepts .msh or .bdf files for now
+my_attributes
+```
+
+This will output the following pandas dataframe:
+
+![Logo](Figures/attributes_dataframe.png)
+
+Now that we can conviently see all of the geometry attributes, we are ready to build our AWS Palace config file to simulate this device. The example shown below can be found [here](eigenmode_example.py).
 
 Now let's create our Config object, which defines config["Problem"], and also create config["Model"]:
 ```python
