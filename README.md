@@ -5,6 +5,7 @@ pyPalace is a code suite used to generate [AWS Palace](https://awslabs.github.io
 AWS Palace please sponsor me (: 
 
 ## Table of Contents
+- [Installation](#installation)
 - [Eigenmode Example](#eigenmode-example): Example of using pyPalace to generate an AWS Palace config file ready for simulation
 - [Function definitions](#function-definitions): Definition of functions and useful links to AWS Palace's github for more context
 
@@ -13,6 +14,28 @@ Aspects of pyPalace that are in progress:
 - postprocessing in examples
 - expand capabilities of certain features
 - transient simulations
+
+
+# Installation
+
+Currently the only option is to install from source.
+
+Open a terminal and navigate to the directory where you want the project:
+
+```
+cd <your_directory>
+git clone https://github.com/FirasAbouzahr/pyPalace.git
+cd pyPalace
+```
+
+Install the package locally using pip:
+
+```
+pip install -e .
+```
+
+All that's left to do now is have fun (:
+
 
 # Eigenmode Example
 
