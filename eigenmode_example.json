@@ -5,8 +5,12 @@
     "Output": "eigenmode_output"
   },
   "Model": {
-    "Mesh": "eigenmode_example.bdf",
-    "L0": 1e-06
+    "Mesh": "CR-res7-v6.bdf",
+    "L0": 1e-06,
+    "Refinement": {
+      "Tol": 1e-06,
+      "MaxIts": 3
+    }
   },
   "Domains": {
     "Materials": [
@@ -15,8 +19,33 @@
           1
         ],
         "Permeability": 1.0,
-        "Permittivity": 11.45,
-        "LossTan": 0.0
+        "Permittivity": [
+          9.3,
+          9.3,
+          11.5
+        ],
+        "LossTan": [
+          3e-05,
+          3e-05,
+          8.6e-05
+        ],
+        "MaterialAxes": [
+          [
+            0.8,
+            0.6,
+            0.0
+          ],
+          [
+            -0.6,
+            0.8,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
       },
       {
         "Attributes": [
@@ -44,7 +73,7 @@
         "Attributes": [
           4
         ],
-        "Direction": "+X",
+        "Direction": "-Y",
         "R": 50,
         "L": 0,
         "C": 0
@@ -54,7 +83,7 @@
         "Attributes": [
           5
         ],
-        "Direction": "-X",
+        "Direction": "-Y",
         "R": 50,
         "L": 0,
         "C": 0
@@ -62,7 +91,7 @@
     ]
   },
   "Solver": {
-    "Order": 1,
+    "Order": 2,
     "Device": "CPU",
     "Eigenmode": {
       "N": 5,

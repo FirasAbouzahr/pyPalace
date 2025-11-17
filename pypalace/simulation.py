@@ -80,3 +80,6 @@ class Simulation:
             
         return pd.DataFrame(attributes_dict,index = None)
 
+
+#    def make_slurm(slurm_filename,path_to_palace,json_filename):
+    
