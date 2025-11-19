@@ -3,10 +3,12 @@ This example creates an AWS Palace config file for an eigenmode simulation of a 
 Below are images of the device and its corresponding mesh.
 
 Modified device to only include resonator 7:
-<img src="Figures/single_resonator_device.png" width="300">
+
+<img src="Figures/single_resonator_device.png" width="500">
 
 Corresponding mesh:
-<img src="Figures/single_resonator_mesh.png" width="300">
+
+<img src="Figures/single_resonator_mesh.png" width="500">
 
 ## Creating an eigenmode config file for this device with pyPalace
 
