@@ -6,7 +6,7 @@ AWS Palace please sponsor me (:
 
 ## Table of Contents
 - [Installation](#installation)
-- [Eigenmode Example](#eigenmode-example): Example of using pyPalace to generate an AWS Palace config file ready for simulation
+- [Examples and Resources ](#examples-and-resources ): Example of using pyPalace to generate an AWS Palace config file ready for simulation
 - [Function definitions](#function-definitions): Definition of functions and useful links to AWS Palace's github for more context
 
 # Installation
