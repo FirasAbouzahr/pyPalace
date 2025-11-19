@@ -1,4 +1,4 @@
-This example creates an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single resonator hanging to a feedline (resonator 7 from [this paper](https://arxiv.org/pdf/2204.07202). 
+This example creates an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single resonator hanging to a feedline (resonator 7 from [this paper](https://arxiv.org/pdf/2204.07202)). 
 
 Below are images of the device and its corresponding mesh.
 
@@ -6,7 +6,7 @@ Modified device to only include resonator 7:
 
 <img src="Figures/single_resonator_device.png" width="900">
 
-Corresponding mesh:
+Corresponding mesh (meshed with [Cubit](https://cubit.sandia.gov/)):
 
 <img src="Figures/single_resonator_mesh.png" width="900">
 
