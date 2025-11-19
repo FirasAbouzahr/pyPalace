@@ -4,11 +4,11 @@ Below are images of the device and its corresponding mesh.
 
 Modified device to only include resonator 7:
 
-<img src="Figures/single_resonator_device.png" width="500">
+<img src="Figures/single_resonator_device.png" width="900">
 
 Corresponding mesh:
 
-<img src="Figures/single_resonator_mesh.png" width="500">
+<img src="Figures/single_resonator_mesh.png" width="900">
 
 ## Creating an eigenmode config file for this device with pyPalace
 
