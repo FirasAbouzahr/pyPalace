@@ -1,7 +1,7 @@
 # Using pyPalace to execute AWS Palace simulations
 
 
-Once we have used pyPalace to generate our AWS Palace config file, we can use it to actually run the simulation, either locally or on a high-performance computer (HPC) with Slurm. This assumes MPI, Palace, and other dependencies are already added to your path, or in the case of an HPC, you've loaded all the proper modules in. 
+The directories above walk you through how to use pyPalace to generate AWS Palace config files for various simulation types and example devices. Once we have a config file ready to go, we can also use pyPalace to actually run AWS Palace and execute a simulation, either locally or on a high-performance computer (HPC) with Slurm. This assumes MPI, Palace, and other dependencies are already added to your path, or in the case of an HPC, you've loaded all the proper modules in. 
 
 First we define our the paths to palace-x86_64.bin and the AWS Palace config file that we generated above. We also create an instance of the Simulation object.
 
