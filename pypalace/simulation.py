@@ -9,10 +9,10 @@ class Simulation:
     def HPC_options(partition,time,nodes,ntasks_per_node,mem,job_name,custom = None):
         
         partition = "partition={}".format(partition)
-        time = "partition={}".format(time)
+        time = "time={}".format(time)
         nodes = "nodes={}".format(nodes)
         ntasks_per_node = "ntasks-per-node={}".format(ntasks_per_node)
-        mem = "mem={}".format(mem)
+        mem = "mem={}G".format(mem)
         job_name = "job-name={}".format(job_name)
         
         slurm_list = [partition,time,nodes,ntasks_per_node,mem,job_name]
