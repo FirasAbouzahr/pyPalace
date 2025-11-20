@@ -54,9 +54,9 @@ class Simulation:
             file.write("mpirun -n $MPI_PROCESSES $PALACE $MY_SIM")
 
 
-            command = subprocess.run(['sbatch', custom_script_name],capture_output=True,text=True)
-            print(command.stdout.strip())
-            print(command.stderr.strip())
+        command = subprocess.run(['sbatch', custom_script_name],capture_output=True,text=True)
+        print(command.stdout.strip())
+        print(command.stderr.strip())
             
     def get_mesh_attributes(filename):
 
