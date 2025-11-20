@@ -22,8 +22,6 @@ my_sim.run_palace(n = 32, # number of MPI processes
 
 Or we call the following to run AWS Palace on an HPC:
 
-    partition,time,nodes,ntasks_per_node,mem,job_name,custom = None
-
 ```python
 HPC_options = Simulation.HPC_options(
                                     partition="short", # #SBATCH --partition=short
