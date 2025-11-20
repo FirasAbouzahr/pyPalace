@@ -176,3 +176,45 @@ my_sim.print_config()
 If it look's good, we are ready to save it! Note ```save_config()``` will also do a validity check and error out if it finds that you did not make a valid config file (e.g., you're missing an important block):
 ```python
 my_sim.save_config("single_resonator.json")
+
+
+Finally, we can use pyPalace to run this simulation either locally or on a high-performance computer (HPC) with Slurm. This assumes MPI, Palace, and other dependencies are already added to your path, or in the case of HPC, you've loaded all the proper modules in. 
+
+First we define our the paths to palace-x86_64.bin and the AWS Palace config file that we generated above. We also create an instance of the Simulation object.
+
+
+```python
+palace = "/path/to/palace_install/bin/palace-x86_64.bin"
+config = "/path/to/single_resonator.json"
+
+my_sim = Simulation(palace) # create simulation object
+```
+
+To run AWS Palace on your local machine, run:
+
+```python
+my_sim.run_palace(n = 32, # number of MPI processes
+                  path_to_json=config # path to palace config file
+                  )
+```
+
+Or we can run it on an HPC with Slurm:
+
+    partition,time,nodes,ntasks_per_node,mem,job_name,custom = None
+
+```python
+HPC_options = Simulation.HPC_options(
+                                    partition="short", # #SBATCH --partition=short
+                                    time="00:30:00", # #SBATCH --time=00:30:00
+                                    nodes=1, # #SBATCH --nodes=1
+                                    ntasks_per_node=32, # #SBATCH --ntasks-per-node=30
+                                    mem=64, # #SBATCH --mem=64G
+                                    job_name="test-job", # #SBATCH --job-name=test-job
+                                    custom=["account=p#####"]) # custom directives you want to add to the job script, for example at my university we need to add account
+                                
+# executes sbatch
+my_sim.run_palace_HPC(n=30, # number of MPI processes
+                      config, # path to palace config file
+                      HPC_options=HPC_options # Slurm directives (e.g, request HPC resources)
+                      ) # execute sbatch
+```
