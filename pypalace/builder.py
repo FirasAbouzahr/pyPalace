@@ -53,7 +53,7 @@ class Domains:
         
     def Postprocessing_Probe(Index,Center):
         dict  = {"Index":Index,
-                 "Center":Attributes}
+                 "Center":Center}
         
         return dict,"Probe"
 
@@ -203,7 +203,7 @@ class Solver:
             driven_dict[driven_labels[i]] = driven_list[i]
 
         return driven_dict,"Driven"
-    
+        
     def Driven_Samples(Type=None,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddtoPROM=None):
         
         samples_dict = {}
@@ -219,7 +219,6 @@ class Solver:
             samples_dict[samples_labels[i]] = samples_list[i]
         
         return samples_dict
-        
 
     def Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
 

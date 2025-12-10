@@ -1,0 +1,96 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "eigenmode_output"
+  },
+  "Model": {
+    "Mesh": "qubit_resonator_mesh.bdf",
+    "L0": 1e-06,
+    "Refinement": {
+      "Tol": 1e-06,
+      "MaxIts": 4
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": [
+          9.3,
+          9.3,
+          11.4
+        ],
+        "LossTan": 8.6e-05,
+        "MaterialAxes": [
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        3,
+        4,
+        5,
+        7,
+        8
+      ]
+    },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          6
+        ],
+        "Direction": "+X",
+        "R": 0,
+        "L": 1e-08,
+        "C": 0
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 6,
+      "Save": 6,
+      "Type": "Default",
+      "Target": 3.0,
+      "Tol": 1e-08
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "Default",
+      "Tol": 1e-08,
+      "MaxIts": 50
+    }
+  }
+}

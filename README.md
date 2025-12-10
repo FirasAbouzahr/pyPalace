@@ -49,7 +49,7 @@ And more!
 
 # Function definitions
 
-Definitions of function parameters come straight from [AWS Palace](https://awslabs.github.io/palace/stable/). So I won't go over specifics of parameters here in too much details. Some functions are still missing and/or incomplete (e.g., Lumped Port does not yet take Rs,Ls,Cs values). This is a work in progress.
+Definitions of function parameters come straight from [AWS Palace](https://awslabs.github.io/palace/stable/). So I won't go over specifics of parameters here in too much details. Some functions are still missing and/or incomplete. This is a work in progress.
 
 Any parameters in the following function definitions which have **None** as their default values will not be included in the config file and hence will revert to their default values set by Palace unless specificed expliticly in the function calls.
 
@@ -184,7 +184,34 @@ Defines which surface blocks/domains will have a lumped port boundary condition.
 * **Rs** (float) - Surface resistance.
 * **Ls** (float) - Surface inductance.
 * **Cs** (float) - Surface capactiance.
-* **Elements** (output from pyPalace.Boundaries.LumpedPort_Elements --- yet to be defined, don't try for now) - Used to define multielement lumped ports.
+* **Elements** (output from pyPalace.Boundaries.LumpedPort_Elements) - Used to define multielement lumped ports.
+
+```python
+LumpedPort_Elements(Attributes,Direction,CoordinateSystem):
+```
+Defines "Elements" for LumpedPort Boundary condition for multielement lumped ports. Used as an input for Boundaries.LumpedPort(...,Elements). None of these function parameters should be used simultaneously with their singular counterparts defined directly in Boundaries.LumpedPort(). [boundaries["LumpedPort"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22LumpedPort%22])
+
+* **Attributes** (list) - ID(s) of mesh domain(s).
+* **Direction** (string or list) - ID(s) of mesh domain(s).
+* **CoordinateSystem** (string) - Coordinate system used to define direction.
+
+```python
+WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None)
+```
+Defines which surface blocks/domains will have a wave port boundary condition. See [boundaries["WavePort"]](https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22WavePort%22])
+
+* **Index** (list) - Index for postprocessing.
+* **Attributes** (list) - ID(s) of mesh domain(s).
+* **Excitation** (boolean) - Turns on or off port excitation. 
+* **Active** (boolean) - Turns on or off damping boundary condition.
+* **Mode** (integer) - Mode index for characteristic port mode.
+* **Offset** (float) - Offset distance for scattering parameter de-embedding in mesh units.
+* **SolverType** (string) - Specifies eigenvalue solver for computing the boundary mode.
+* **MaxIts** (integer) - Maximum iterations for GMRES solver.
+* **KSPTol** (float) - Linear solver tolerance.
+* **EigenTol** (float) - Eigevalue solver tolerance.
+* **Verbose** (integer) - Verbosity level for linear and eigenvalue solvers.
+
 
 ```python
 Impedance(Attributes,Rs=None,Ls=None,Cs=None)

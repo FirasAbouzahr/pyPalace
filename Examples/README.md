@@ -9,14 +9,13 @@ First we define our the paths to palace-x86_64.bin and the AWS Palace config fil
 palace = "/path/to/palace_install/bin/palace-x86_64.bin"
 config = "/path/to/example_config.json"
 
-my_sim = Simulation(palace) # create simulation object
+my_sim = Simulation(palace,config) # create simulation object
 ```
 
 To run AWS Palace on your local machine, we next call:
 
 ```python
 my_sim.run_palace(n = 32, # number of MPI processes
-                  path_to_json=config # path to palace config file
                   )
 ```
 
@@ -34,7 +33,6 @@ HPC_options = Simulation.HPC_options(
                                 
 # executes sbatch
 my_sim.run_palace_HPC(n=30, # number of MPI processes
-                      config, # path to palace config file
                       HPC_options=HPC_options # Slurm directives (e.g, request HPC resources)
-                      ) # execute sbatch
+                      ) 
 ```

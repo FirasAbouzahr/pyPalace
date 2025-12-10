@@ -3,8 +3,9 @@ import subprocess
 
 class Simulation:
 
-    def __init__(self,path_to_palace):
+    def __init__(self,path_to_palace,path_to_json):
         self.path_to_palace = path_to_palace
+        self.path_to_json = path_to_json
         
     def HPC_options(partition,time,nodes,ntasks_per_node,mem,job_name,custom = None):
         
@@ -23,12 +24,13 @@ class Simulation:
         
         return slurm_list
 
-    def run_palace(self,n,path_to_json):
-        command = subprocess.run(["mpirun", "-n",str(n),self.path_to_palace,path_to_json],capture_output=True,text=True)
+    def run_palace(self,n):
+        
+        command = subprocess.run(["mpirun", "-n",str(n),self.path_to_palace,self.path_to_json],capture_output=True,text=True)
         print(command.stdout.strip())
         print(command.stderr.strip())
 
-    def run_palace_HPC(self,n,path_to_json,HPC_options,custom_script_name = None):
+    def run_palace_HPC(self,n,HPC_options,custom_script_name = None):
         
         if n != int(HPC_options[3][-2:]):
             print("Best practice is to match number of mpi process to number of corses per node. Overwriting to n = ntasks-per-node")
@@ -48,7 +50,7 @@ class Simulation:
             file.write("\n")
             
             file.write('export PALACE="{}"\n'.format(self.path_to_palace))
-            file.write('export MY_SIM="{}"\n'.format(path_to_json))
+            file.write('export MY_SIM="{}"\n'.format(self.path_to_json))
             file.write('export MPI_PROCESSES={}\n'.format(n))
             file.write("\n")
             file.write("mpirun -n $MPI_PROCESSES $PALACE $MY_SIM")
@@ -57,7 +59,30 @@ class Simulation:
         command = subprocess.run(['sbatch', custom_script_name],capture_output=True,text=True)
         print(command.stdout.strip())
         print(command.stderr.strip())
-            
+        
+# coming soon!
+#    def get_qubit_anharmonicity(self,qubit_mode,LumpedPort_index):
+#        
+#        phi0 =
+#
+#        
+#        with open(self.path_to_json, "r") as f:
+#            this_config = json.load(f)
+#        
+#        output_folder = this_config["Problem"]["Output"]
+#        
+#        for lp in data["Boundaries"]["LumpedPort"]:
+#            if lp["Index"] == LumpedPort_index:
+#                Lj = lp["L"]
+#        
+#        Ej = phi0**2/Lj
+#        
+#        
+#        eigenvals = pd.read_csv(output_folder + "/eig.csv")
+#        eigenvals.columns = [""]
+#        
+        
+          
     def get_mesh_attributes(filename):
 
         attributes_list = []

@@ -6,11 +6,7 @@
   },
   "Model": {
     "Mesh": "single_resonator_mesh.bdf",
-    "L0": 1e-06,
-    "Refinement": {
-      "Tol": 1e-06,
-      "MaxIts": 6
-    }
+    "L0": 1e-06
   },
   "Domains": {
     "Materials": [
