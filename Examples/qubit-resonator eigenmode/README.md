@@ -1,4 +1,4 @@
-This example creates an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single qubit-resonator subsystem (with a truncated feedline). 
+This example creates an AWS Palace config file for an eigenmode simulation of a superconducting circuit consisting of a single qubit-resonator subsystem (with a truncated feedline). The mesh file can be found [above](qubit_resonator_mesh.bdf).
 
 Below are images of the device, its corresponding mesh, and the qubit mode from the eigenmode simulation visualized in ParaView.
 
@@ -6,7 +6,7 @@ Below are images of the device, its corresponding mesh, and the qubit mode from 
 
 ## Creating an eigenmode config file for this device with pyPalace
 
-The example outlined below can be found in [this python script](resonator_eigenmode_example.py) or this [this notebook](resonator_eigenmode_example.ipynb).
+The example outlined below can be found in [this python script](qubit_res_eigenmode_example.py) or this [this notebook](qubit_res_eigenmode_example.ipynb).
 
 We start by importing the needed pyPalace libraries:
 
@@ -39,14 +39,15 @@ This outputs the following pandas dataframe:
 <img src="Figures/attributes_dataframe.png" width="300">
 
 So we have the following attributes:
+
 **Volumes**
 * we'll define substrate (1) as sapphire
-* and we'll define air as a vacuum
+* and we'll define air (2) as a vacuum.
 
 **Surfaces**
-* feedline (3), resonator (4), and qubit (5), and ground plane are the superconducting components which we will define as PEC
-* JJ is the Josephson junction, we will define this as a lumped port with inductance $L_J$ = 10.4 nH
-* far field is the geometry closing boundary, we also define this as PEC, some folk define it as an absorbing boundary condition instead.
+* feedline (3), resonator (4), and qubit (5), and ground plane (7) are the superconducting components which we will define as PEC
+* JJ (6) is the Josephson junction, we will define this as a lumped port with inductance $L_J$ = 10.4 nH
+* far field (8) is the geometry closing boundary, we will also define this as PEC. Some folk define it as an absorbing boundary condition instead.
 
 
 Now we define our materials and boundary conditions and add them to the config["Domains"] and config["Boundaries"] blocks.
