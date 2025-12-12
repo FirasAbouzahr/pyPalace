@@ -36,9 +36,9 @@ Now that we can conviently see all of the geometry attributes, we are ready to b
 
 Now let's create our Config object, which defines config["Problem"], and let's also create config["Model"]:
 ```python
-my_sim = Config("Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
+my_config = Config("Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
 
-my_sim.add_Model(meshfile,Refinement=my_refinement) # creates config["Model"], no AMR because the circuit element is already meshed finely
+my_config.add_Model(meshfile,Refinement=my_refinement) # creates config["Model"], no AMR because the circuit element is already meshed finely
 ```
 
 Now we define our materials:
@@ -61,8 +61,8 @@ my_BCs = [PECs,Lumped1,Lumped2] # boundary condition list for input into add_Bou
 now let's add config["Domains"] and config["Boundaries"] using our material and BC lists defined above.
 ```python
 # add config["Domains"] and config["Boundaries"] using our material and BC lists above
-my_sim.add_Domains(my_materials)
-my_sim.add_Boundaries(my_BCs)
+my_config.add_Domains(my_materials)
+my_config.add_Boundaries(my_BCs)
 ```
 
 Define our eigenmode and linear solver parameters nd add them to the config["Solver"] block::
@@ -77,12 +77,12 @@ Linear_params = Solver.Linear(Type="Default",
                               Tol = 1e-6,
                               MaxIts = 10)
                               
-my_sim.add_Solver(Simulation=eigenmode_params,Order = 1,Linear=Linear_params)
+my_config.add_Solver(Simulation=eigenmode_params,Order = 1,Linear=Linear_params)
 ```
 
 We have defined everything we need so let's print out the config file to see what it looks like:
 ```python
-my_sim.print_config()
+my_config.print_config()
 ```
 ```
 {
@@ -170,5 +170,5 @@ my_sim.print_config()
 
 If it look's good, we are ready to save it! Note ```save_config()``` will also do a validity check and error out if it finds that you did not make a valid config file (e.g., you're missing an important block):
 ```python
-my_sim.save_config("single_resonator.json")
+my_config.save_config("single_resonator.json")
 ```

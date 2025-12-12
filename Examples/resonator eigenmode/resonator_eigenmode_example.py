@@ -3,8 +3,8 @@ from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
 meshfile = "single_resonator_mesh.bdf"
 
 '''Now let's create our Config object, which defines config["Problem"], and let's also create config["Model"]:'''
-my_sim = Config("Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
-my_sim.add_Model(meshfile) # creates config["Model"], no AMR because the circuit element is already meshed finely
+my_config = Config("Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
+my_config.add_Model(meshfile) # creates config["Model"], no AMR because the circuit element is already meshed finely
 
 '''Now we define our materials:'''
 # define materials
@@ -20,8 +20,8 @@ Lumped2 = Boundaries.LumpedPort(Index=2,Attributes=[5],Direction="-X",R=50,L=0,C
 my_BCs = [PECs,Lumped1,Lumped2] # boundary condition list for input into add_Boundaries()
 
 '''Now let's add config["Domains"] and config["Boundaries"] using our material and BC lists defined above.'''
-my_sim.add_Domains(my_materials)
-my_sim.add_Boundaries(my_BCs)
+my_config.add_Domains(my_materials)
+my_config.add_Boundaries(my_BCs)
 
 '''Define our eigenmode and linear solver parameters and add them to the config["Solver"] block'''
 eigenmode_params = Solver.Eigenmode(Target = 1.0,
@@ -34,8 +34,8 @@ Linear_params = Solver.Linear(Type="Default",
                               Tol = 1e-6,
                               MaxIts = 10)
 
-my_sim.add_Solver(Simulation=eigenmode_params,Order = 1,Linear=Linear_params)
+my_config.add_Solver(Simulation=eigenmode_params,Order = 1,Linear=Linear_params)
 
 '''we are ready to save the config file and start simulating (:'''
 '''Note save_config() will also do a validity check and error out if it finds that you did not make a valid config file (e.g., you're missing a required block):'''
-my_sim.save_config("single_resonator.json")
+my_config.save_config("single_resonator.json")

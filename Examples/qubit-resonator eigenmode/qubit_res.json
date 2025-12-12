@@ -2,14 +2,14 @@
   "Problem": {
     "Type": "Eigenmode",
     "Verbose": 2,
-    "Output": "eigenmode_output"
+    "Output": "qubit_res_output"
   },
   "Model": {
     "Mesh": "qubit_resonator_mesh.bdf",
     "L0": 1e-06,
     "Refinement": {
       "Tol": 1e-06,
-      "MaxIts": 4
+      "MaxIts": 3
     }
   },
   "Domains": {
@@ -18,13 +18,21 @@
         "Attributes": [
           1
         ],
-        "Permeability": 1.0,
+        "Permeability": [
+          1.0,
+          1.0,
+          1.0
+        ],
         "Permittivity": [
           9.3,
           9.3,
-          11.4
+          11.5
         ],
-        "LossTan": 8.6e-05,
+        "LossTan": [
+          3e-05,
+          3e-05,
+          8.6e-05
+        ],
         "MaterialAxes": [
           [
             1,
@@ -71,7 +79,7 @@
         ],
         "Direction": "+X",
         "R": 0,
-        "L": 1e-08,
+        "L": 1.04e-08,
         "C": 0
       }
     ]
