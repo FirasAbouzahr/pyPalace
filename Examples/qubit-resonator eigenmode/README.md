@@ -279,9 +279,9 @@ p_r = -4.659996e-04
 And finally we calculate and print out our Hamiltonian parameters:
 
 ```python
-alpha = my_sim.get_anharmonicity(qubit_mode,JJ_LumpedPort_index) # given in MHz
-chi = my_sim.get_dispersive_shift(qubit_mode,resonator_mode,JJ_LumpedPort_index) # given in MHz
-g = my_sim.get_coupling_strength(qubit_mode,resonator_mode,JJ_LumpedPort_index) # given in MHz
+alpha = Simulation.calculate_anharmonicity(p_q,f_q,Lj=Lj) # given in MHz
+chi = Simulation.calculate_dispersive_shift(p_q,p_r,f_q,f_r,Lj=Lj)
+g = Simulation.calculate_coupling_strength(f_q,f_r,alpha,chi) # given in MHz
 
 print("==========================================================")
 print("The Hamiltonian Parameters of this qubit-resonator system:")
