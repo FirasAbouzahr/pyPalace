@@ -40,10 +40,6 @@ class Simulation:
 
     def run_palace_HPC(self,n,HPC_options,custom_script_name = None):
         
-        if n != int(HPC_options[3][-2:]):
-            print("Best practice is to match number of mpi process to number of corses per node. Overwriting to n = ntasks-per-node")
-            n = int(HPC_options[3][-2:])
-            
         if custom_script_name == None:
             custom_script_name = "palace_jobscript.sh"
         
@@ -67,9 +63,9 @@ class Simulation:
         command = subprocess.run(['sbatch', custom_script_name],capture_output=True,text=True)
         print(command.stdout.strip())
         print(command.stderr.strip())
-        
-    # f_q in GHz (default of Palace), Ej in Joules, Lj in Henries
-    def calculate_anharmonicity(p_q,f_q,Ej = None,Lj = None):
+    
+    ## from https://arxiv.org/pdf/2010.00620 (equation 9)
+    def calculate_anharmonicity(p_q,f_q,Ej = None,Lj = None): # f_q in GHz (default of Palace), Ej in Joules, Lj in Henries
 
         if Ej == None and Lj == None:
             raise ValueError("Please enter a value for either Ej or Lj")
@@ -83,7 +79,8 @@ class Simulation:
         alpha_q = (alpha_q / (2*pi)) * 10**-6 # convert to MHz
         
         return -alpha_q
-
+    
+    ## from https://arxiv.org/pdf/2010.00620 (equation 11)
     def calculate_dispersive_shift(p_q,p_r,f_q,f_r,Ej = None,Lj = None):
         
         if Ej == None and Lj == None:
@@ -100,10 +97,12 @@ class Simulation:
         chi = (chi / (2*pi)) * 10**-6 # convert to MHz
  
         return -chi
-
+    
+    ## from https://arxiv.org/pdf/2010.00620
     def calculate_lamb_shift(alpha_q,chi):
         return alpha_q - chi/2
-        
+    
+    ## from https://arxiv.org/pdf/2312.13483 (equation 9)
     def calculate_coupling_strength(f_q,f_r,alpha_q,chi):
         delta = (f_r - f_q)*1000
         sigma = (f_q + f_r)*1000
