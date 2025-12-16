@@ -16,7 +16,7 @@ We dice this chip and mesh each resonator subsystem separately, an example of on
   <img src="Figures/res5_mesh.png" width="800">
 </p>
 
-Now we are ready to iteraively generate the config files and submit each one to be simulated on an HPC using the slurm HPC manager. The code shown below can be found [here](simulate_8_resonator_chip.py).
+Now we are ready to iteratively generate the config files and submit each one to be simulated on an HPC using the slurm HPC manager. The code shown below can be found [here](simulate_8_resonator_chip.py).
 
 ```python
 from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
