@@ -6,7 +6,7 @@ Here we go over a few examples that showcase how pyPalace is well-suited for ite
 If there is negligible parasitic coupling between neighboring circuit elements in a superconducting quantum device we can safely simulate each subcircuit individually. In this example, we consider the following device from [this paper](https://arxiv.org/pdf/2204.07202). Since the circuit has negligble coupling between the resonators, we can "dice" the chip into 8 indiviudal resonator subsystems and simulate each individually. In the figure below, we illustrate these 8 indiviudal resonator subsystems, we include the full feedline with lumped ports on both ends for each resonator subsystem in order to extract the coupling quality factors ($Q_c$) between each resonator and the feedline (see this background information from [AWS Palace](https://awslabs.github.io/palace/dev/reference/#Energy-participation-ratios)). In practice however to minimize the size of the problem, we could have also truncate each subsystem to only contain a small portion of the feedline that's directly above it.
 
 <p align="center">
-  <img src="Figures/diced_8-resonator_chip.png" width="800">
+  <img src="Figures/diced_8-resonator_chip.png" width="600">
 </p>
 
 We dice this chip and mesh each resonator subsystem separately, an example of one of the meshed subsystems is shown below:
