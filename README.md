@@ -1,8 +1,8 @@
 # pyPalace 
 
-pyPalace is a code suite used to generate [AWS Palace](https://awslabs.github.io/palace/stable/) (FEM electromagnetic simulations) config files with python. The main goal of this suite is to allow for a more intuitive, automated, and easy-to-use method of writing Palace config files for superconducting quantum circuit simulations (or other devices!).
+pyPalace is a python code suite used to streamline [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of circuit QED/superconducting quantum devices. The main functionality of pyPalace is to generate Palace config files using python. pyPalace is also a general purpose superconducting circuit design tool that provides functionality to extract Hamiltonian/device parameters from Palace simulation results, conduct iterative design studies, and interface with HPCs. 
 
-AWS Palace please sponsor me (: 
+For comments, questions, or collaboration please feel free to contact me at [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu).
 
 ## Table of Contents
 - [Installation](#installation)
@@ -27,11 +27,9 @@ Install the package locally using pip:
 pip install -e .
 ```
 
-All that's left to do now is have fun (:
-
 # Examples and Resources 
 
-Examples of how to use pyPalace to generate AWS Palace config files can be found [here](Examples). 
+Examples of how to use pyPalace can be found [here](Examples).
 
 Aspects of pyPalace that are still being developed:
 - Documentation and examples for driven, transient, electrostatic, and magnetostatic.
@@ -39,19 +37,11 @@ Aspects of pyPalace that are still being developed:
 - Expand capabilities of certain features.
 - Transient simulations.
 
-We also hope to expand the scope of pyPalace to be a general purpose superconducting qubit design tool in the future:
-- Automated simulating on HPCs using Slurm. 
-- Materials library with data from simulations and experiments.
-- Benchmakring library to help inform your own simulations' compute requirements.
-- circuit QED calculations (e.g., Hamiltonian parameters) from simulation results.
-
-And more!
-
 # Function definitions
 
-Definitions of function parameters come straight from [AWS Palace](https://awslabs.github.io/palace/stable/). So I won't go over specifics of parameters here in too much details. Some functions are still missing and/or incomplete. This is a work in progress.
+Definitions of functions and their parameters follow directly from [AWS Palace](https://awslabs.github.io/palace/stable/).
 
-Any parameters in the following function definitions which have **None** as their default values will not be included in the config file and hence will revert to their default values set by Palace unless specificed expliticly in the function calls.
+Any parameters in the following function definitions which have **None** as their default values will not be included in the config file and will revert to their default values set by Palace unless specificed expliticly in the function calls.
 
 ## pyPalace.Model
 All these functions, once or if used, will eventually be entered as paramters in pyPalace.Config.add_Model or in other functions within pyPalace.Model.
