@@ -1,15 +1,15 @@
-Here we go over a few examples that showcase how pyPalace is well-suited for iterative studies. By using pyPalace's config generating syntax with its HPC interface, we can streamline generating config files and then directly submitting each simulation as a slurm job all in the same script. Alternatively, if running on 
+Here we go over a few examples that showcase how pyPalace is well-suited for iterative studies. By using pyPalace's config generating syntax with its HPC interface inside a loop, we can build all the config files and then directly submit each simulation as a slurm job all in the same script. 
 
 
 ## Simulating a full chip as system of independent subsystems
 
-If there is negligible parasitic coupling between neighboring circuit elements in a superconducting quantum device we can safely simulate each subcircuit individually. In this example, we consider the following device from [this paper](https://arxiv.org/pdf/2204.07202). Since the circuit has negligble coupling between the resonators, we can "dice" the chip into 8 indiviudal resonator subsystems and simulate each individually. In the figure below, we illustrate these 8 indiviudal resonator subsystems, we include the full feedline with lumped ports on both ends for each resonator subsystem in order to extract the coupling quality factors ($Q_c$) between each resonator and the feedline (see this background information from [AWS Palace](https://awslabs.github.io/palace/dev/reference/#Energy-participation-ratios)). In practice however to minimize the size of the problem, we could have also truncate each subsystem to only contain a small portion of the feedline that's directly above it.
+If there is negligible parasitic coupling between neighboring circuit elements in a superconducting quantum device we can safely simulate each subcircuit individually. In this example, we consider an eight resonator device from [this paper](https://arxiv.org/pdf/2204.07202). Since the circuit has negligble coupling between the resonators, we can "dice" the chip into 8 resonator subsystems and simulate each individually. In the figure below, we illustrate these 8 indiviudal resonator subsystems. We include the full feedline with lumped ports on both ends for each subsystem in order to extract the coupling quality factors ($Q_c$) between each resonator and the feedline (see this background information from [AWS Palace](https://awslabs.github.io/palace/dev/reference/#Energy-participation-ratios)). In practice however to minimize the size of the problem, we could have also truncate each subsystem to only contain a small portion of the feedline that's directly above it.
 
 <p align="center">
   <img src="Figures/diced_8-resonator_chip.png" width="600">
 </p>
 
-We dice this chip and mesh each resonator subsystem separately, an example of one of the meshed subsystems is shown below:
+After we dice this chip in a CAD software, we mesh each resonator subsystem separately. An example of one of the meshed subsystems is shown below:
 
 
 <p align="center">
