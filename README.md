@@ -1,12 +1,12 @@
 # pyPalace 
 
-pyPalace is a python code suite used to streamline [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of circuit QED/superconducting quantum devices. The main functionality of pyPalace is to generate Palace config files using python. pyPalace is also a general purpose superconducting circuit design tool that provides functionality to extract Hamiltonian/device parameters from Palace simulation results, conduct iterative design studies, and interface with HPCs. 
+pyPalace is a python code suite used to streamline [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of circuit QED/superconducting quantum devices. The main functionality of pyPalace is to generate Palace config files using python. pyPalace is also a general purpose superconducting circuit design tool that provides functionality for quantum analysis of Palace results, conduct iterative design studies, and interface with HPCs. 
 
-For comments, questions, or collaboration please feel free to contact me at [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu).
+For comments, questions, or collaboration feel free to contact me at [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu).
 
 ## Table of Contents
 - [Installation](#installation)
-- [Examples and Resources ](#examples-and-resources)
+- [Examples and Resources](#examples-and-resources)
 - [Function definitions](#function-definitions)
 
 # Installation
@@ -29,14 +29,23 @@ pip install -e .
 
 # Examples and Resources 
 
-Examples of how to use pyPalace can be found [here](Examples).
+All pyPalace Examples can be found [here](Examples). The current examples available are:
 
-Aspects of pyPalace that are still being developed:
-- Documentation and examples for driven, transient, electrostatic, and magnetostatic.
-- Postprocessing in examples.
-- Expand capabilities of certain features.
-- Transient simulations.
+* [qubit-resonator eigenmode](Examples/qubit-resonator%20eigenmode/)
+  - Config generation for eigenmode simulations of a resonator-qubit device.
+  - EPR analysis with pyPalace.
 
+* [resonator eigenmode](Examples/resonator%20eigenmode/)
+  - Config generation for eigenmode simulations of a single resonator device.
+ 
+* [iterative studies with pyPalace](Examples/iterative%20studies%20with%20pyPalace/)
+  - How to use pyPalace for iterative qubit design studies.
+  - HPC interfacing with pyPalace.
+ 
+* [Flux through a SQUID loop (Magnetostatics)](Examples/Flux%20through%20a%20SQUID%20loop%20(Magnetostatics)/)
+  - Config generation for magnetostatic simulations with SurfaceFlux postprocessing of a tunable transmon.
+  - Quantum analysis of Palace results with scQubits.
+ 
 # Function definitions
 
 pyPalace function definitions and relevant links to corresponding AWS Palace documentation can be found in [pypalace](pypalace). 
