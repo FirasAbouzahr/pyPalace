@@ -111,7 +111,7 @@ class Boundaries:
 
         return dict,"LumpedPort"
         
-    def LumpedPort_Elements(Attributes,Direction,CoordinateSystem):
+    def Elements(Attributes,Direction,CoordinateSystem):
         return {"Attributes":Attributes,"Direction":Direction,"CoordinateSystem":CoordinateSystem}
         
     def WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None):
@@ -145,6 +145,22 @@ class Boundaries:
             dict[impedance_labels[i]] = impedance_list[i]
 
         return dict,"Impedance"
+    
+    ## need to fix syntax to match lumped port ##
+    def SurfaceCurrent(Index,Attributes,Direction,CoordinateSystem=None,Elements=None):
+        dict = {"Index":Index,
+                "Attributes":Attributes,
+                "Direction":Direction}
+                
+        if Elements != None:
+            dict = {"Index":Index,
+            "Attributes":Attributes,
+            "Elements":Elements}
+            
+        if CoordinateSystem != None:
+            dict["CoordinateSystem"] = CoordinateSystem
+        
+        return dict,"SurfaceCurrent"
 
     def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
         dict = {"Index":Index,
@@ -155,14 +171,28 @@ class Boundaries:
                 "LossTan":LossTan}
 
         return dict,"Dielectric"
+        
+        
+    def Postprocessing_SurfaceFlux(Index,Attributes,Type,TwoSided=False,Center=None):
+        dict = {"Index":Index,
+                "Attributes":Attributes,
+                "Type":Type}
+                
+        if TwoSided == True:
+            dict["TwoSided"] = str(TwoSided)
+        
+        elif Center != None:
+            dict["TwoSided"] = Center
+
+        return dict,"SurfaceFlux"
 
 class Solver:
     
-    def Electrostatic(N):
-        return {"N":N}
+    def Electrostatic(Save):
+        return {"Save":N},"Electrostatic"
     
-    def Magnetostatic(N):
-        return {"N":N}
+    def Magnetostatic(Save):
+        return {"Save":Save},"Magnetostatic"
 
     def Eigenmode(Target,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
 

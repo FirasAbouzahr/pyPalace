@@ -1,0 +1,74 @@
+{
+  "Problem": {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "magneto_output"
+  },
+  "Model": {
+    "Mesh": "tunable_xmon.bdf",
+    "L0": 1e-06
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 11.45,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        3,
+        5,
+        7,
+        8
+      ]
+    },
+    "SurfaceCurrent": [
+      {
+        "Index": 1,
+        "Attributes": [
+          6
+        ],
+        "Direction": "+X"
+      }
+    ],
+    "Postprocessing": {
+      "SurfaceFlux": [
+        {
+          "Index": 2,
+          "Attributes": [
+            4
+          ],
+          "Type": "Magnetic"
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic": {
+      "Save": 5
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "Default",
+      "Tol": 1e-06,
+      "MaxIts": 100
+    }
+  }
+}

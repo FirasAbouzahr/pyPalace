@@ -82,6 +82,7 @@ class Config:
         Postprocessing_labels = ["SurfaceFlux","Dielectric"]
         
         if len(Postprocessing) != 0:
+            
             for lab in Postprocessing_labels:
             
                 mask = Postprocessing[:, 1] == lab
