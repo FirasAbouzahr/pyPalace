@@ -2,7 +2,7 @@
 
 Here we demonstrate how to use pyPalace to generate an AWS Palace config file for magnetostatic simulations. Specifically, this is a study of the magnetic flux through tranmon qubit's SQUID loop in order to analyze it frequency tunability. 
 
-The device in question is shown below, generated with [Qiskit Metal](https://qiskit-community.github.io/qiskit-metal/). The corresponding Qiskit Metal code to generate this device can be found [here](). The device consists of an "xmon" style transmon. At the bottom of its cross geoemetry is a 20 x 20 square micron quasi-SQUID loop (no real junctions). The loop is coupled to a flux bias line directly beneath it. 
+The device in question is shown below, generated with [Qiskit Metal](https://qiskit-community.github.io/qiskit-metal/). The corresponding Qiskit Metal code to generate this device can be found [here](qiskit_metal-tunable_xmon.ipynb). The device consists of an "xmon" style transmon. At the bottom of its cross geoemetry is a 20 x 20 square micron quasi-SQUID loop (no real junctions). The loop is coupled to a flux bias line directly beneath it. 
 
 <p align="center">
   <img src="Figures/qiskit_metal-tunable_xmon-image.png" width="600">
@@ -11,7 +11,7 @@ The device in question is shown below, generated with [Qiskit Metal](https://qis
 We use pyPalace to generate a config file for the corresponding meshed geometry of this device. Using Palace's SurfaceFlux postprocessing (config["Boundaries"]["PostProcessing"]["SurfaceFlux"]), the simulation will output information about flux through the SQUID loop. We then use [scQubits]() to further analyze the results and extract the frequency tunability of our qubit as well as its coherence information. 
 
 **Table of Conents:**
-* [CCreating a magnetostatic config file with pyPalace](#creating-a-magnetostatic-config-file-for-this-device-with-pyPalace)
+* [Creating a magnetostatic config file with pyPalace](#creating-a-magnetostatic-config-file-for-this-device-with-pyPalace)
 * [Quantum Analysis with scQubits](#quantum-analysis-with-scqubits)
 
 ## Creating a magnetostatic config file for this device with pyPalace
