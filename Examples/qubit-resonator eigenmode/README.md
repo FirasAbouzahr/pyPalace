@@ -4,6 +4,10 @@ Below are images of the device, its corresponding mesh, and the qubit mode from 
 
 <img src="Figures/qubit_res.png" width="900">
 
+**Table of Conents:**
+* [Creating an eigenmode config file with pyPalace](#creating-an-eigenmode-config-file-for-this-device-with-pyPalace)
+* [EPR Analysis](#epr-analysis)
+
 ## Creating an eigenmode config file for this device with pyPalace
 
 The example outlined below can be found in [this python script](qubit_res_eigenmode_example.py) or this [this notebook](qubit_res_eigenmode_example.ipynb).
@@ -193,7 +197,7 @@ Save the config file
 my_config.save_config("qubit_res.json",check_validity=True) # checks validity of file and raises error if something is missing
 ```
 
-## EPR analysis
+## EPR Analysis
 
 #### Assuming we've ran the above simulation, we can now do EPR analysis to get our Hamiltonian parameters including:
 * the qubit anharmonicity, alpha.
