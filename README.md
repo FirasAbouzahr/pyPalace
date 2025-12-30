@@ -42,7 +42,7 @@ All pyPalace Examples can be found [here](Examples). The current examples availa
   - How to use pyPalace for iterative qubit design studies.
   - HPC interfacing with pyPalace.
  
-* [Flux through a SQUID loop (Magnetostatics)](Examples/Flux%20through%20a%20SQUID%20loop%20(Magnetostatics)/)
+* [Flux through a SQUID loop (Magnetostatics)](Examples/Flux%20through%20a%20SQUID%20loop%20%28Magnetostatics%29/)
   - Config generation for magnetostatic simulations with SurfaceFlux postprocessing of a tunable transmon.
   - Quantum analysis of Palace results with scQubits.
  
