@@ -86,8 +86,11 @@ class Boundaries:
     def Ground(Attributes):
         dict = {"Attributes":Attributes}
         return dict,"Ground"
+        
+    def Terminal(Index,Attributes):
+        dict = {"Index":Index,"Attributes":Attributes}
+        return dict,"Terminal"
     
-
     def LumpedPort(Index,Attributes,Direction=None,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
     
         dict = {"Index":Index,
@@ -189,7 +192,7 @@ class Boundaries:
 class Solver:
     
     def Electrostatic(Save):
-        return {"Save":N},"Electrostatic"
+        return {"Save":Save},"Electrostatic"
     
     def Magnetostatic(Save):
         return {"Save":Save},"Magnetostatic"

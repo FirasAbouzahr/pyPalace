@@ -43,8 +43,12 @@ All pyPalace Examples can be found [here](Examples). The current examples availa
   - HPC interfacing with pyPalace.
  
 * [Flux through a SQUID loop (Magnetostatics)](Examples/Flux%20through%20a%20SQUID%20loop%20%28Magnetostatics%29/)
-  - Config generation for magnetostatic simulations with SurfaceFlux postprocessing of a tunable transmon.
-  - Quantum analysis of Palace results with scQubits.
+  - Config generation for magnetostatic simulation of a tunable transmon with a coupled flux bias line with pyPalace.
+  - Quantum analysis with scQubits to extract frequency tunability from Palace results.
+  
+ * [Qubit Hamiltonian from Capacitance Matrix (Electrostatics)](Examples/Qubit%20Hamiltonian%20from%20Capacitance%20Matrix%20%28Electrostatics%29/)
+  - Generate and execute electrostatic simulations of a pocket transmon and a xmon qubit with pyPalace.
+  - Quantum analysis with scQubits to extract qubit Hamiltonian parameters from Palace results.
  
 # Function definitions
 

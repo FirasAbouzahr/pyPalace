@@ -12,6 +12,7 @@ We use pyPalace to generate a config file for the corresponding meshed geometry 
 
 **Table of Conents:**
 * [Creating a magnetostatic config file with pyPalace](#creating-a-magnetostatic-config-file-for-this-device-with-pyPalace)
+
 * [Quantum Analysis with scQubits](#quantum-analysis-with-scqubits)
 
 ## Creating a magnetostatic config file for this device with pyPalace
