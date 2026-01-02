@@ -1,8 +1,8 @@
 ## Electrostatic Simulations of Superconducting Qubits to extract Hamiltonian parameters
 
-Below we have examples of electrostatic simulations for two different styles of superconducting qubits, a pocket (or double-pad) transmon and an xmon. For each simulation, we use the capacitance matrix results to extract their corresponding Hamiltonian parameters using scQubits for quantum analysis. 
+Below we have examples of electrostatic simulations for two different styles of superconducting qubits, a pocket (or double-pad) transmon and an xmon. For each simulation, we use capacitance matrix results to extract their corresponding Hamiltonian parameters with scQubits. 
 
-The pocket transmon and xmon designs (generated with [Qiskit Metal](https://qiskit-community.github.io/qiskit-metal/)). The corresponding Qiskit Metal code to generate these devices can be found [here](qiskit-metal_qubit_builder.ipynb). 
+The pocket transmon and xmon designs (generated with [Qiskit Metal](https://qiskit-community.github.io/qiskit-metal/)) are shown below. The corresponding Qiskit Metal code to generate these devices can be found [here](qiskit-metal_qubit_builder.ipynb). 
 
 <p align="center">
   <img src="Figures/qiskit-metal_qubit_images.png" width="600">
@@ -188,7 +188,7 @@ print("Qubit Anharmonicity = {} MHz".format(np.round(alpha_pocket,2)))
 print("=====================================")
 ```
 
-The prints out:
+This prints out:
 
 ```
 =====================================
@@ -227,7 +227,7 @@ print("Qubit Anharmonicity = {} MHz".format(np.round(alpha_xmon,2)))
 print("=====================================")
 ```
 
-The prints out:
+This prints out:
 
 ```
 =====================================
