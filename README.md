@@ -47,8 +47,8 @@ All pyPalace Examples can be found [here](Examples). The current examples availa
   - Quantum analysis with scQubits to extract frequency tunability from Palace results.
   
  * [Qubit Hamiltonian from Capacitance Matrix (Electrostatics)](Examples/Qubit%20Hamiltonian%20from%20Capacitance%20Matrix%20%28Electrostatics%29/)
-  - Generate and execute electrostatic simulations of a pocket transmon and a xmon qubit with pyPalace.
-  - Quantum analysis with scQubits to extract qubit Hamiltonian parameters from Palace results.
+    - Generate and execute electrostatic simulations of a pocket transmon and a xmon qubit with pyPalace.
+    - Quantum analysis with scQubits to extract qubit Hamiltonian parameters from Palace results.
  
 # Function definitions
 

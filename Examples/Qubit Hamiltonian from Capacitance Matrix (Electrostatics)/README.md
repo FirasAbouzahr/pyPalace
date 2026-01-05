@@ -11,7 +11,8 @@ The pocket transmon and xmon designs (generated with [Qiskit Metal](https://qisk
 The designs were meshed using [Cubit](https://cubit.sandia.gov/). The meshfile for the pocket transmon can be found [here](pocket_transmon.bdf) and the xmon [here](xmon.bdf).
 
 **Table of Contents**
-[pyPalace Code](#pyPalace-code-to-generate-the-electrostatic-config-files-and-run-the-simulations)
+
+[pyPalace Code](#pyPalace-code-to-generate-and-run-aws-palace-electrostatic-simulations)
 * pyPalace code to generate and run AWS Palace electrostatic simulations for each qubit.
 
 [Quantum Analysis](#quantum-analysis-with-scqubits-to-extract-hamiltonian-parameters)
