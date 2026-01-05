@@ -1,10 +1,14 @@
 from pypalace import Simulation, Config, Model, Domains, Boundaries, Solver
 
 meshfile = "qubit_resonator_mesh.bdf"
-my_config = Config("Eigenmode",Output="eigenmode_output") # config["Problem"]
+
+my_config = Config("qubit_res.json")
  
+# define config["Problem"]
+my_config.add_Problem("Eigenmode",Output="qubit_res_output") # config["Problem"]
+
 # define adaptive mesh refinement, the qubit is coarsely meshed to save on file size so we use AMR to boost simulation accuracy
-my_refinement = Model.Refinement(Tol = 1e-6,MaxIts = 4)
+my_refinement = Model.Refinement(Tol = 1e-6,MaxIts = 3)
 
 # define config["Model"] block
 my_config.add_Model(meshfile,L0=1e-6,Refinement=my_refinement)
@@ -38,4 +42,4 @@ Linear_params = Solver.Linear(Type="Default",
 my_config.add_Solver(Simulation=eigenmode_params,Order = 2,Linear=Linear_params)
 
 # save it
-my_config.save_config("qubit_res.json",check_validity=True) # checks validity of file and raises error if something is missing
+my_config.save_config(check_validity=True) # checks validity of file and raises error if something is missing

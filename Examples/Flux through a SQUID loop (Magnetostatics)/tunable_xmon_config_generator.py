@@ -1,9 +1,11 @@
 from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
 
-'''Create config object (creates config["Problem"]) and add config["Model"]'''
-my_config = Config("Magnetostatic",Output="magneto_output")
-my_config.add_Model(meshfile,L0=1e-6) # no adaptive mesh refinement, already finely meshed
+'''create config object'''
+my_config = Config("tunable_xmon.json")
 
+'''add Problem and Model blocks to config'''
+my_config.add_Problem("Magnetostatic",Output="magneto_output")
+my_config.add_Model(meshfile,L0=1e-6) # no adaptive mesh refinement, already finely meshed 
 
 '''define materials and boundary conditions'''
 # define materials
@@ -37,5 +39,5 @@ Linear_params = Solver.Linear(Type="Default",
 my_config.add_Solver(Simulation=magneto_params,Order= 2,Linear=Linear_params)
 
 '''save config file'''
-my_config.save_config("tunable_xmon.json")
+my_config.save_config()
 

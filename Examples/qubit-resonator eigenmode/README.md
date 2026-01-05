@@ -18,14 +18,18 @@ We start by importing the needed pyPalace libraries:
 from pypalace import Simulation, Config, Model, Domains, Boundaries, Solver
 ```
 
-First let's create the config object (automatically creates config["Problem"] and also define config["Model"].
+First we create the config object and then define the config["Problem"] and config["Model"] blocks
 
 ```python
+my_config = Config("qubit_res.json")
+
 meshfile = "qubit_resonator_mesh.bdf"
-my_config = Config("Eigenmode",Output="eigenmode_output") # config["Problem"]
- 
+
+# define config["Problem"]
+my_config.add_Problem("Eigenmode",Output="qubit_res_output") # config["Problem"]
+
 # define adaptive mesh refinement, the qubit is coarsely meshed to save on file size so we use AMR to boost simulation accuracy
-my_refinement = Model.Refinement(Tol = 1e-6,MaxIts = 4)
+my_refinement = Model.Refinement(Tol = 1e-6,MaxIts = 3)
 
 # define config["Model"] block
 my_config.add_Model(meshfile,L0=1e-6,Refinement=my_refinement)

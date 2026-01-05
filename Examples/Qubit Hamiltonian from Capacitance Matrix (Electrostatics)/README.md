@@ -31,9 +31,15 @@ path_to_palace = "/Users/firasabouzahr/Desktop/AWSPalace/install/bin/palace-arm6
 ### Pocket Transmon
 
 ```python
-''' define config object (Problem) and Model '''
-pocket_config = Config(Type="Electrostatic",Output="pocket_electro_output")
-pocket_config.add_Model(pocket_meshfile)
+pocket_meshfile = "pocket_transmon.bdf"
+pocket_path_to_json = "pocket_transmon-electrostatic_sim.json"
+
+''' Define config object '''
+pocket_config = Config(pocket_path_to_json)
+
+''' Problem and Model '''
+pocket_config.add_Problem(Type="Electrostatic",Output="pocket_electro_output")
+pocket_config.add_Model(pocket_meshfile) # no AMR, meshed finely already
 
 ''' Materials '''
 silicon = Domains.Material([1],1.0,11.45,0.0) # silicon 
@@ -48,7 +54,7 @@ coupler_terminal = Boundaries.Terminal(Index=3,Attributes=[5]) # qubit-res coupl
 resonator_terminal = Boundaries.Terminal(Index=4,Attributes=[6]) # resonator coupler - we won't use this but must assign it something
 
 ## Ground ##
-Grounds = Boundaries.Ground(Attributes=[7,8]) # ground plane, far field
+Grounds = Boundaries.Ground(Attributes=[7,8]) ## ground plane, far field
 
 ''' Boundary Postprocessing '''
 top_pad_sf = Boundaries.Postprocessing_SurfaceFlux(Index=1,Attributes=[3],Type="Electric")
@@ -65,16 +71,15 @@ electro_params = Solver.Electrostatic(Save=3)
 
 Linear_params = Solver.Linear(Type="BoomerAMG",
                               KSPType = "CG",
-                              Tol = 1e-6,
-                              MaxIts = 500)
+                              Tol = 1e-6, # make more stringent for better results
+                              MaxIts = 25)
                               
 pocket_config.add_Solver(Simulation=electro_params,
                      Order= 2, # second order solver
                      Linear=Linear_params)
 
 ''' save config '''
-pocket_path_to_json = "pocket_transmon-electrostatic_sim.json"
-pocket_config.save_config(pocket_path_to_json)
+pocket_config.save_config()
 
 ''' run the simulation '''
 pocket_simulation = Simulation(path_to_palace,pocket_path_to_json)
@@ -86,9 +91,15 @@ This will print out the AWS Palace terminal log output. See notebook example.
 ### Xmon
 
 ```python
-''' define config object (Problem) and Model '''
-xmon_config = Config(Type="Electrostatic",Output="xmon_electro_output")
-xmon_config.add_Model(xmon_meshfile)
+xmon_meshfile = "xmon.bdf"
+xmon_path_to_json = "xmon-electrostatic_sim.json"
+
+''' Define config object '''
+xmon_config = Config(xmon_path_to_json)
+
+''' Problem and Model '''
+xmon_config.add_Problem(Type="Electrostatic",Output="xmon_electro_output")
+xmon_config.add_Model(xmon_meshfile) # no AMR, meshed finely already
 
 ''' Materials '''
 silicon = Domains.Material([1],1.0,11.45,0.0) # silicon 
@@ -116,16 +127,15 @@ electro_params = Solver.Electrostatic(Save=3)
 
 Linear_params = Solver.Linear(Type="BoomerAMG",
                               KSPType = "CG",
-                              Tol = 1e-6,
-                              MaxIts = 500)
+                              Tol = 1e-6, # make more stringent for better results
+                              MaxIts = 25) 
                               
 xmon_config.add_Solver(Simulation=electro_params,
                        Order= 2, # second order solver
                        Linear=Linear_params)
 
 ''' save config '''
-xmon_path_to_json = "xmon-electrostatic_sim.json"
-xmon_config.save_config(xmon_path_to_json)
+xmon_config.save_config()
 
 ''' run the simulation '''
 xmon_simulation = Simulation(path_to_palace,xmon_path_to_json)

@@ -31,14 +31,20 @@ meshfile = "tunable_xmon.bdf"
 Simulation.get_mesh_attributes(meshfile)
 ```
 
-```python
-my_config = Config("Magnetostatic",Output="magneto_output")
-my_config.add_Model(meshfile,L0=1e-6) # no adaptive mesh refinement, already finely meshed 
-```
-
 This outputs the following pandas dataframe:
 
 <img src="Figures/attributes_dataframe.png" width="300">
+
+Now we create our config object and add config["Problem"] and config["Model"]:
+
+```python
+# create config object
+my_config = Config("tunable_xmon.json")
+
+# add Problem and Model to config
+my_config.add_Problem("Magnetostatic",Output="magneto_output")
+my_config.add_Model(meshfile,L0=1e-6) # no adaptive mesh refinement, already finely meshed 
+```
 
 Now we define our materials and boundary conditions and add them to the config["Domains"] and config["Boundaries"] blocks. We add a surface current BC at the flux line port, this generates the magnetic flux through our SQUID loop.
 

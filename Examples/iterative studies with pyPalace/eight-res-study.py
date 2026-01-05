@@ -2,10 +2,14 @@ from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
 
 for i in range(8):
     current_mesh = "res{}.bdf".format(i)
-    my_config = Config("Eigenmode",Output="res{}_output".format(i)) # config["Problem"]
+    current_config = "res{}_config.json".format(i)
+    
+    my_config = Config(current_config)
+    
+    my_config.add_Problem("Eigenmode",Output="res{}_output".format(i)) # config["Problem"]
 
     # define config["Model"] block
-    my_config.add_Model(current_mesh,L0=1e-6)#,Refinement=my_refinement)
+    my_config.add_Model(current_mesh,L0=1e-6) # this could use AMR but not adding it for now
 
     # define materials
     sapphire = Domains.Material(Attributes = [1],
@@ -41,8 +45,7 @@ for i in range(8):
     my_config.add_Solver(Simulation=eigenmode_params,Order = 2,Linear=Linear_params)
     
     ## save this config
-    current_config = "res{}_config.json".format(i)
-    my_config.save_config(current_config) # checks validity of file and raises error if something is missing
+    my_config.save_config() # checks validity of file and raises error if something is missing
     
     
     ##################################################

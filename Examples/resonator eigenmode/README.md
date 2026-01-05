@@ -34,11 +34,15 @@ This outputs the following pandas dataframe:
 
 Now that we can conviently see all of the geometry attributes, we are ready to build our AWS Palace config file to simulate this device. We do not add any adapative mesh refinement (AMR) here because the resonator is already meshed finely. For an example with AMR see [qubit-resonator eigenmode](../qubit-resonator eigenmode/).
 
-Now let's create our Config object, which defines config["Problem"], and let's also create config["Model"]:
+Let's create our Config object which requires us to choose the name of the final config file we will save:
 ```python
-my_config = Config("Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
+my_config = Config("single_resonator.json") 
+```
 
-my_config.add_Model(meshfile,Refinement=my_refinement) # creates config["Model"], no AMR because the circuit element is already meshed finely
+Now we add config["Problem"] and config["Model"] to our config file:
+```python
+my_config.add_Problem(Type="Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
+my_config.add_Model(meshfile) # creates config["Model"], no AMR because the circuit element is already meshed finely
 ```
 
 Now we define our materials:

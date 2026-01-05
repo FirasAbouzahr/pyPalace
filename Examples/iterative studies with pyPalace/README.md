@@ -23,10 +23,14 @@ from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
 
 for i in range(8):
     current_mesh = "res{}.bdf".format(i)
-    my_config = Config("Eigenmode",Output="res{}_output".format(i)) # config["Problem"]
+    current_config = "res{}_config.json".format(i)
+    
+    my_config = Config(current_config)
+    
+    my_config.add_Problem("Eigenmode",Output="res{}_output".format(i)) # config["Problem"]
 
     # define config["Model"] block
-    my_config.add_Model(current_mesh,L0=1e-6)#,Refinement=my_refinement)
+    my_config.add_Model(current_mesh,L0=1e-6) # this could use AMR but not adding it for now
 
     # define materials
     sapphire = Domains.Material(Attributes = [1],
@@ -62,8 +66,7 @@ for i in range(8):
     my_config.add_Solver(Simulation=eigenmode_params,Order = 2,Linear=Linear_params)
     
     ## save this config
-    current_config = "res{}_config.json".format(i)
-    my_config.save_config(current_config) # checks validity of file and raises error if something is missing
+    my_config.save_config() # checks validity of file and raises error if something is missing
     
     
     ##################################################
@@ -71,7 +74,6 @@ for i in range(8):
     #### create slurm scripts and submit HPC jobs ####
     ##################################################
     ##################################################
-    
     
     palace = "/projects/p32999/palace/palace_install/bin/palace-x86_64.bin"
     config = "/projects/p32999/pyPalace/{}".format(current_config)
@@ -90,7 +92,6 @@ for i in range(8):
     my_sim.run_palace_HPC(n=100, # number of MPI processes
                           HPC_options=HPC_options, # Slurm directives (e.g, request HPC resources)
                           custom_script_name="jobscript_res{}".format(i)) 
-
 ```
 
 After running this script, we see the following terminal output (printed in the script):

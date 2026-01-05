@@ -2,8 +2,11 @@ from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
 
 meshfile = "single_resonator_mesh.bdf"
 
-'''Now let's create our Config object, which defines config["Problem"], and let's also create config["Model"]:'''
-my_config = Config("Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
+'''Let's create our Config object which requires us to choose the name of the final config file we will save:'''
+my_config = Config("single_resonator.json")
+
+'''Now we add config["Problem"] and config["Model"] to our config file: '''
+my_config.add_Problem(Type="Eigenmode",Output="resonator_eigenmode_output") # creates config["Problem"]
 my_config.add_Model(meshfile) # creates config["Model"], no AMR because the circuit element is already meshed finely
 
 '''Now we define our materials:'''
@@ -38,4 +41,4 @@ my_config.add_Solver(Simulation=eigenmode_params,Order = 1,Linear=Linear_params)
 
 '''we are ready to save the config file and start simulating (:'''
 '''Note save_config() will also do a validity check and error out if it finds that you did not make a valid config file (e.g., you're missing a required block):'''
-my_config.save_config("single_resonator.json")
+my_config.save_config()
