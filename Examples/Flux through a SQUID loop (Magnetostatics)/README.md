@@ -84,7 +84,7 @@ magneto_params = Solver.Magnetostatic(Save=5)
 Linear_params = Solver.Linear(Type="Default",
                               KSPType = "Default",
                               Tol = 1e-6,
-                              MaxIts = 100)
+                              MaxIts = 2000)
                               
 my_config.add_Solver(Simulation=magneto_params,Order= 2,Linear=Linear_params)
 ```
@@ -179,13 +179,15 @@ my_config.save_config("tunable_xmon.json")
 
 ## Quantum Analysis with scQubits
 
-Once we run the simulation (took about 50 seconds to run with 50 MPI processes on an HPC) using the config file we generated above, we can analyze Palace's results using scQubits. Relevant to this analysis, we need the files ```surface-F.csv``` and ```terminal-I.csv``` from the Palace output. The code below can be found [here](scqubits_analysis.ipynb).
+Once we run the simulation (took about 5 minutes to run with 128 MPI processes on an HPC) using the config file we generated above, we can analyze Palace's results using scQubits. Relevant to this analysis, we need the files ```surface-F.csv``` and ```terminal-I.csv``` from the Palace output. The code below can be found [here](scqubits_analysis.ipynb).
 
 ```python
 import scqubits as scq
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.constants import h
+phi0 = 2.0678338484619295e-15 # flux qu santum
 ```
 
 We read in the relevant Palace output files:
@@ -197,31 +199,39 @@ phi_df.columns = ["flux"]
 
 ## read in the current data ##
 current_df = pd.read_csv("magneto_output/terminal-I.csv",usecols = [1])
-current_df.columns = ["current"] 
+current_df.columns = ["current"]
 ```
 
-Calculate flux per unit current in units of flux quantum and choose our qubit parameters:
+Calculate flux per unit current in units of flux quantum:
 
 ```python
 # divide the flux through our SQUID loop by the terminal current to get flux per unit current [weber / ampere]
 dphi_dI = phi_df.flux.to_numpy() / current_df.current.to_numpy() 
 
 ## convert to units of flux quantum ## 
-phi0 = 2.0678338484619295e-15 
 norm_dphi_dI = abs(dphi_dI/phi0) # normalize
+```
 
-## current through flux line ###
-current = np.linspace(0,20*10**(-3),25)
+SQUID loop parameters for scqubits:
+```python
+# assume both junctions have LJ ≈ 10 nH
+LJ = 10e-9 # 10 nH 
+EJ = phi0**2/((2*np.pi)**2*LJ)
+EJ_MHz = EJ / h * 1e-6 # convert to MHz
 
-## SQUID loop parameters for scqubits ##
-junction_asymmetry = .01
-EJmax = 50
-EC=.5
+# EJ and EC in MHz 
+EJmax = 2*EJ_MHz # EJMax = EJ1 + EJ2 ≈ 2*EJ1 = 2*EJ_MHz
+EC= 177.33 # see Qubit Hamiltonian from Capacitance Matrix (Electrostatics) xmon example in pyPalace
+junction_asymmetry = .01 # give the SQUID loop some asymmetry 
 ```
 
 Finally, let's find the tunability of our qubit's frequency as a function of the flux bias line's input current:
 
 ```python
+## current through flux line ###
+current = np.linspace(0,10*10**(-3),25)
+
+''' get qubit frequencies '''
 frequencies = []
 for I in current:
     flux = I * norm_dphi_dI
@@ -233,25 +243,27 @@ for I in current:
                                          ncut=30
                                         )
     frequencies.append(qubit.E01())
-    
-frequencies = np.array(frequencies)
-deltaf = frequencies - frequencies.max()
 
+frequencies = np.array(frequencies)
+
+''' Plot frequency against flux bias line current '''
 fig,ax = plt.subplots()
-plt.plot(current*1000,deltaf*10**3)
+plt.plot(current*1000,frequencies)
 
 plt.xlabel("Flux Bias Line Current [mA]",fontsize = 14)
-plt.ylabel(r"$\Delta f_q$ [MHz]",fontsize = 14)
+plt.ylabel(r"$f_q$ [MHz]",fontsize = 14)
 plt.xticks(fontsize = 12)
 plt.yticks(fontsize = 12)
 
-plt.title("Change in Qubit Frequency vs Flux Bias Line Current")
-plt.savefig("Figures/deltaf_vs_current.png")
+plt.title("Qubit Frequency vs Flux Bias Line Current")
+plt.savefig("Figures/f_vs_current.png")
+
 ```
 This yields the following plot:
 
 <p align="center">
-  <img src="Figures/deltaf_vs_current.png" width="600">
+  <img src="Figures/f_vs_current.png" width="600">
 </p>
 
-With the given SQUID parameters, we get a frequency tunability range of about 6 MHz - not great but this could be optimized with a better design of the fluxline and fluxline-qubit coupling. 
+With the given SQUID parameters, we get a frequency tunability range of about 600 MHz!
+
