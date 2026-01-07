@@ -32,12 +32,32 @@ my_config.add_Boundaries(my_BCs,Postprocessing=my_Boundaries_pp)
 magneto_params = Solver.Magnetostatic(Save=5)
 
 Linear_params = Solver.Linear(Type="Default",
-                              KSPType = "Default",
+                              KSPType = "GMRES",
                               Tol = 1e-6,
-                              MaxIts = 100)
+                              MaxIts = 500)
                               
 my_config.add_Solver(Simulation=magneto_params,Order= 2,Linear=Linear_params)
 
 '''save config file'''
 my_config.save_config()
+
+'''run the simulation an slurm managed HPC'''
+palace = "/projects/p32999/palace/palace_install/bin/palace-x86_64.bin" # change to your path to Palace
+
+my_sim = Simulation(palace,"tunable_xmon.json")
+
+HPC_options = Simulation.HPC_options(
+                                    partition="short", # #SBATCH --partition=short
+                                    time="00:10:00", # #SBATCH --time=00:30:00
+                                    nodes=1, # #SBATCH --nodes=1
+                                    ntasks_per_node=32, # #SBATCH --ntasks-per-node=30
+                                    mem=75, # #SBATCH --mem=75G
+                                    job_name="test-job", # #SBATCH --job-name=test-job
+                                    custom=["account=p#####"] # custom directives you want to add to the job script like account for example.
+                                    )
+                                
+# executes sbatch
+my_sim.run_palace_HPC(n=50, # number of MPI processes
+                      HPC_options=HPC_options # Slurm directives (e.g, request HPC resources)
+                      )
 

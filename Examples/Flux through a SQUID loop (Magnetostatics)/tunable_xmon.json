@@ -66,9 +66,9 @@
     },
     "Linear": {
       "Type": "Default",
-      "KSPType": "Default",
-      "Tol": 1e-08,
-      "MaxIts": 2000
+      "KSPType": "GMRES",
+      "Tol": 1e-06,
+      "MaxIts": 500
     }
   }
 }

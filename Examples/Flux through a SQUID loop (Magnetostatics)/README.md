@@ -162,9 +162,9 @@ my_config.print_config()
     },
     "Linear": {
       "Type": "Default",
-      "KSPType": "Default",
+      "KSPType": "GMRES",
       "Tol": 1e-06,
-      "MaxIts": 100
+      "MaxIts": 500
     }
   }
 }
@@ -177,9 +177,11 @@ Save the config file
 my_config.save_config("tunable_xmon.json")
 ```
 
+pyPalace code to build and the run this config file on an HPC can be found [here](tunable_xmon_HPC.py)
+
 ## Quantum Analysis with scQubits
 
-Once we run the simulation (took about 5 minutes to run with 128 MPI processes on an HPC) using the config file we generated above, we can analyze Palace's results using scQubits. Relevant to this analysis, we need the files ```surface-F.csv``` and ```terminal-I.csv``` from the Palace output. The code below can be found [here](scqubits_analysis.ipynb).
+Once we run the simulation (took about 2.5 minutes to run with 50 MPI processes on an HPC) using the config file we generated above, we can analyze Palace's results using scQubits. Relevant to this analysis, we need the files ```surface-F.csv``` and ```terminal-I.csv``` from the Palace output. The code below can be found [here](scqubits_analysis.ipynb).
 
 ```python
 import scqubits as scq
@@ -265,5 +267,5 @@ This yields the following plot:
   <img src="Figures/f_vs_current.png" width="600">
 </p>
 
-With the given SQUID parameters, we get a frequency tunability range of about 600 MHz!
+With the given SQUID parameters, we get a frequency tunability range of about 1.2 GHz!
 
