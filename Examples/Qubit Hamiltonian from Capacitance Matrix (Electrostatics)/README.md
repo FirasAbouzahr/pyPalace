@@ -16,7 +16,7 @@ The designs were meshed using [Cubit](https://cubit.sandia.gov/). The meshfile f
 * pyPalace code to generate and run AWS Palace electrostatic simulations for each qubit.
 
 [Quantum Analysis](#quantum-analysis-with-scqubits-to-extract-hamiltonian-parameters)
-* Extract Palace electrostatic simulation results for both qubit geometries and extract their Hamiltonian parameters with scQubits
+* Extract qubit Hamiltonian parameters with scQubits
 
 ## pyPalace Code to Generate and Run AWS Palace Electrostatic Simulations
 
@@ -172,16 +172,18 @@ EJ_MHz = EJ / h * 1e-6 # convert to MHz
 pocket_df = pd.read_csv("pocket_electro_output/terminal-C.csv",usecols =[1,2,3]) # dropped palace index labeling
 
 '''extract capacitance and calculate Ec'''
-C_tp = pocket_df.iloc[0][0] # self-capacitance of top pad
-C_bp = pocket_df.iloc[1][1] # self-capacitance of bottom pad
-C_mutal = abs(pocket_df.iloc[0][1]) # mutal capacitance between pads
+C11 = pocket_df.iloc[0][0] # self-capacitance of top pad
+C22 = pocket_df.iloc[1][1] # self-capacitance of bottom pad
+C12 = pocket_df.iloc[0][1] # negative of mutal capacitance between pads 
 
 ## total shunt capacitance ##
-C_sigma_pocket = C_tp + C_bp - 2*C_mutal
+C_sigma_pocket = abs(C12) + ((C11 + C12)* (C22 + C12)) / (C11 + C22 + 2*C12)
+print("Total Shunt Capacitance = {} fF".format(np.round(C_sigma_pocket*1e15,2)))
 
 ## calculate qubit charging energy 
 EC_pocket = e**2/(2*C_sigma_pocket) 
 EC_pocket_MHz = EC_pocket / h * 1e-6 # convert to MHz
+print("EC = {} MHz".format(np.round(EC_pocket_MHz,2)))
 
 '''extract Hamiltonian parameters with scQubits'''
 pocket_transmon = scq.Transmon(EJ=EJ_MHz,
@@ -202,6 +204,8 @@ print("=====================================")
 This prints out:
 
 ```
+Total Shunt Capacitance = 74.86 fF
+EC = 258.74 MHz
 =====================================
 Hamitlonian Parameters:
 Qubit Frequency = 4.27 GHz
@@ -217,10 +221,12 @@ xmon_df = pd.read_csv("xmon_electro_output/terminal-C.csv",usecols =[1,2]) # dro
 '''extract capacitance and calculate Ec'''
 ## total shunt capacitance ##
 C_sigma_xmon = xmon_df.iloc[0][0]
+print("Total Shunt Capacitance = {} fF".format(np.round(C_sigma_xmon*1e15,2)))
 
 ## calculate qubit charging energy 
 EC_xmon = e**2/(2*C_sigma_xmon) 
 EC_xmon_MHz = EC_xmon / h * 1e-6 
+print("EC = {} MHz".format(np.round(EC_xmon_MHz,2)))
 
 '''extract Hamiltonian parameters with scQubits'''
 xmon = scq.Transmon(EJ=EJ_MHz,
@@ -241,6 +247,8 @@ print("=====================================")
 This prints out:
 
 ```
+Total Shunt Capacitance = 109.23 fF
+EC = 177.33 MHz
 =====================================
 Hamitlonian Parameters:
 Qubit Frequency = 4.63 GHz
