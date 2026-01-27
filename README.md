@@ -34,10 +34,7 @@ All pyPalace Examples can be found [here](Examples). The current examples availa
 * [qubit-resonator eigenmode](Examples/qubit-resonator%20eigenmode/)
   - Config generation for eigenmode simulations of a resonator-qubit device.
   - EPR analysis with pyPalace.
-
-* [resonator eigenmode](Examples/resonator%20eigenmode/)
-  - Config generation for eigenmode simulations of a single resonator device.
- 
+  
 * [iterative studies with pyPalace](Examples/iterative%20studies%20with%20pyPalace/)
   - How to use pyPalace for iterative qubit design studies.
   - HPC interfacing with pyPalace.
