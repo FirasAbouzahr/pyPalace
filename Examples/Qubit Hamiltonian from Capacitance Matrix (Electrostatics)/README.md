@@ -1,4 +1,4 @@
-## Electrostatic Simulations of Superconducting Qubits to extract Hamiltonian parameters
+# Electrostatic Simulations and LOM Analysis of Superconducting Qubits
 
 Below we have examples of electrostatic simulations for two different styles of superconducting qubits, a pocket (or double-pad) transmon and an xmon. For each simulation, we use capacitance matrix results to extract their corresponding Hamiltonian parameters with scQubits. 
 
@@ -10,26 +10,22 @@ The pocket transmon and xmon designs (generated with [Qiskit Metal](https://qisk
 
 The designs were meshed using [Cubit](https://cubit.sandia.gov/). The meshfile for the pocket transmon can be found [here](pocket_transmon.bdf) and the xmon [here](xmon.bdf).
 
-**Table of Contents**
 
-[pyPalace Code](#pyPalace-code-to-generate-and-run-aws-palace-electrostatic-simulations)
-* pyPalace code to generate and run AWS Palace electrostatic simulations for each qubit.
+## Example code
 
-[Quantum Analysis](#quantum-analysis-with-scqubits-to-extract-hamiltonian-parameters)
-* Extract qubit Hamiltonian parameters with scQubits
-
-## pyPalace Code to Generate and Run AWS Palace Electrostatic Simulations
-
-The following code can be found in [this notebook](pyPalace_electrostatic_qubit_example.ipynb). 
+The full notebook can be found in [this notebook](pyPalace_electrostatic_qubit_example.ipynb). 
 
 ```python
-from pypalace import Config, Model, Domains, Boundaries, Solver, Simulation
+from pypalace import Config, Simulation,Tools
+from pypalace.builder import Model, Domains, Boundaries, Solver
 
 ''' path to Palace install ''' 
 path_to_palace = "/Users/firasabouzahr/Desktop/AWSPalace/install/bin/palace-arm64.bin"
 ```
 
-### Pocket Transmon
+## Pocket Transmon
+
+### Build config file and run simulation of pocket transmon
 
 ```python
 pocket_meshfile = "pocket_transmon.bdf"
@@ -52,7 +48,7 @@ pocket_config.add_Domains(Materials=[silicon,air]) # add the materials
 top_pad_terminal = Boundaries.Terminal(Index=1,Attributes=[3]) # top capacitor pad 
 bottom_pad_terminal = Boundaries.Terminal(Index=2,Attributes=[4]) # bottom capacitor pad
 coupler_terminal = Boundaries.Terminal(Index=3,Attributes=[5]) # qubit-res coupler
-resonator_terminal = Boundaries.Terminal(Index=4,Attributes=[6]) # resonator coupler - we won't use this but must assign it something
+resonator_terminal = Boundaries.Terminal(Index=4,Attributes=[6]) # truncated resonator - we won't use this but must assign it something
 
 ## Ground ##
 Grounds = Boundaries.Ground(Attributes=[7,8]) ## ground plane, far field
@@ -83,13 +79,33 @@ pocket_config.add_Solver(Simulation=electro_params,
 pocket_config.save_config()
 
 ''' run the simulation '''
-pocket_simulation = Simulation(path_to_palace,pocket_path_to_json)
-pocket_simulation.run_palace(n=5) # 5 mpi processses
+pocket_simulation = Simulation(pocket_config,path_to_palace)
+capacitance_matrix = pocket_simulation.run(n=5) # 5 mpi processses
 ```
 
 This will print out the AWS Palace terminal log output. See notebook example.
 
-### Xmon
+
+### LOM Analysis
+```python
+from pypalace.analysis import LOM
+
+C00 = capacitance_matrix.iloc[0,0]
+C11 = capacitance_matrix.iloc[1,1]
+C01 = capacitance_matrix.iloc[0,1]
+C02 = capacitance_matrix.iloc[0,2]
+
+C_Sigma = abs(C01) + ((C00 + C01)*(C11+C01))/(C00 + C11 + 2*C01) + abs(C02)
+LJ = 10e-09
+
+Hamiltonian_params = LOM.get_Hamiltonian_parameters(C_Sigma,LJ)
+Hamiltonian_params
+```
+{'frequency_GHz': 5.123972820277544, 'anharmonicity_MHz': -244.22663291970457}
+
+## Xmon
+
+### Build config file and run simulation of xmon
 
 ```python
 xmon_meshfile = "xmon.bdf"
@@ -139,119 +155,18 @@ xmon_config.add_Solver(Simulation=electro_params,
 xmon_config.save_config()
 
 ''' run the simulation '''
-xmon_simulation = Simulation(path_to_palace,xmon_path_to_json)
-xmon_simulation.run_palace(n=5) # 5 mpi processses
+xmon_simulation = Simulation(xmon_config,path_to_palace)
+capacitance_matrix = xmon_simulation.run(n=5) # 5 mpi processses
 ```
 
-This will print out the AWS Palace terminal log output. See notebook example.
-
-Note in this repository we only include the ```terminal-C.csv``` dataset for each of these simulations, however, the simulation actually outputs a lot of other useful data such as the surface flux, electrostatic energy, and ParaView files for visualization. 
-
-
-## Quantum Analysis with scQubits to extract Hamiltonian Parameters
-
-The following code with additional commentary can be found in [this notebook](Hamiltonian_params_with_scQubits.ipynb).
-
+### LOM Analysis
 ```python
-import scqubits as scq
-import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
-from scipy.constants import e,h,pi
-phi0 = 2.0678338484619295e-15 # flux quantum
+C00 = capacitance_matrix.iloc[0,0]
 
-## choose LJ for your qubit ##
-LJ = 10e-9 # 10 nH 
-EJ = phi0**2/((2*np.pi)**2*LJ)
-EJ_MHz = EJ / h * 1e-6 # convert to MHz
+C_Sigma = C00
+LJ = 10e-09 # 10 nH
+
+Hamiltonian_params = LOM.get_Hamiltonian_parameters(C_Sigma,LJ)
+Hamiltonian_params
 ```
-
-### Pocket Transmon 
-
-```python
-pocket_df = pd.read_csv("pocket_electro_output/terminal-C.csv",usecols =[1,2,3]) # dropped palace index labeling
-
-'''extract capacitance and calculate Ec'''
-C11 = pocket_df.iloc[0][0] # self-capacitance of top pad
-C22 = pocket_df.iloc[1][1] # self-capacitance of bottom pad
-C12 = pocket_df.iloc[0][1] # negative of mutal capacitance between pads 
-
-## total shunt capacitance ##
-C_sigma_pocket = abs(C12) + ((C11 + C12)* (C22 + C12)) / (C11 + C22 + 2*C12)
-print("Total Shunt Capacitance = {} fF".format(np.round(C_sigma_pocket*1e15,2)))
-
-## calculate qubit charging energy 
-EC_pocket = e**2/(2*C_sigma_pocket) 
-EC_pocket_MHz = EC_pocket / h * 1e-6 # convert to MHz
-print("EC = {} MHz".format(np.round(EC_pocket_MHz,2)))
-
-'''extract Hamiltonian parameters with scQubits'''
-pocket_transmon = scq.Transmon(EJ=EJ_MHz,
-                              EC=EC_pocket_MHz,
-                              ng=0,
-                              ncut=31)
-
-f_q_pocket = pocket_transmon.E01() / 1000 # in GHz
-alpha_pocket = pocket_transmon.anharmonicity() # in MHz
-
-print("=====================================")
-print("Hamitlonian Parameters:")
-print("Qubit Frequency = {} GHz".format(np.round(f_q_pocket,2)))
-print("Qubit Anharmonicity = {} MHz".format(np.round(alpha_pocket,2)))
-print("=====================================")
-```
-
-This prints out:
-
-```
-Total Shunt Capacitance = 74.86 fF
-EC = 258.74 MHz
-=====================================
-Hamitlonian Parameters:
-Qubit Frequency = 4.27 GHz
-Qubit Anharmonicity = -163.34 MHz
-=====================================
-```
-
-### Xmon
-
-```python
-xmon_df = pd.read_csv("xmon_electro_output/terminal-C.csv",usecols =[1,2]) # dropped palace index labeling
-
-'''extract capacitance and calculate Ec'''
-## total shunt capacitance ##
-C_sigma_xmon = xmon_df.iloc[0][0]
-print("Total Shunt Capacitance = {} fF".format(np.round(C_sigma_xmon*1e15,2)))
-
-## calculate qubit charging energy 
-EC_xmon = e**2/(2*C_sigma_xmon) 
-EC_xmon_MHz = EC_xmon / h * 1e-6 
-print("EC = {} MHz".format(np.round(EC_xmon_MHz,2)))
-
-'''extract Hamiltonian parameters with scQubits'''
-xmon = scq.Transmon(EJ=EJ_MHz,
-                    EC=EC_xmon_MHz,
-                    ng=0,
-                    ncut=31)
-
-f_q_xmon = xmon.E01() / 1000 # in GHz
-alpha_xmon = xmon.anharmonicity() # in MHz
-
-print("=====================================")
-print("Hamitlonian Parameters:")
-print("Qubit Frequency = {} GHz".format(np.round(f_q_xmon,2)))
-print("Qubit Anharmonicity = {} MHz".format(np.round(alpha_xmon,2)))
-print("=====================================")
-```
-
-This prints out:
-
-```
-Total Shunt Capacitance = 109.23 fF
-EC = 177.33 MHz
-=====================================
-Hamitlonian Parameters:
-Qubit Frequency = 4.63 GHz
-Qubit Anharmonicity = -195.12 MHz
-=====================================
-```
+{'frequency_GHz': 4.63089052046631, 'anharmonicity_MHz': -195.1212942191978}

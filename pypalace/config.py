@@ -7,7 +7,20 @@ class Config:
         self.config_name = config_name
         self.tracker = []
         self.sim = {}
-                    
+        self.saved = False
+        
+    @classmethod
+    def load_config(cls, config_name):
+        with open(config_name, "r") as f:
+            existing_config = json.load(f)
+
+        this_config = cls(config_name)  # create instance
+
+        this_config.tracker = ["Problem","Solver","Model","Domains","Boundaries"]
+        this_config.sim = existing_config
+
+        return this_config
+        
     def add_Problem(self,Type,Verbose=2,Output="sim_output"):
     
         self.tracker.append("Problem")
@@ -18,7 +31,6 @@ class Config:
                                "Verbose":Verbose,
                                "Output":Output}
 
-        
     def add_Model(self,Mesh,L0=1.0e-6,Lc=None,Refinement=None):
 
         self.tracker.append("Model")
@@ -118,6 +130,8 @@ class Config:
         self.sim["Solver"] = solver_dict
 
     def save_config(self,check_validity = True):
+    
+        self.saved = True
         
         if check_validity == True:
             validity_counter = []
@@ -143,3 +157,10 @@ class Config:
 
     def print_config(self):
         print(json.dumps(self.sim, indent=2))
+        
+
+#### Simulate ####
+
+    
+
+

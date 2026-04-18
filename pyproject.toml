@@ -7,7 +7,7 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = ["numpy","pandas"]
+dependencies = ["numpy","pandas","scqubits"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
