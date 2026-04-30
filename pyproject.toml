@@ -1,13 +1,32 @@
 [project]
-name = "pyPalace"
+name = "pypalace"
 version = "0.1.0"
-description = "A code suite to automate the generation of AWS Palace config files"
+description = "A Python toolkit for superconducting circuit design and simulation workflows using AWS Palace."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+
 authors = [
     { name = "Firas Abouzahr" }
 ]
-readme = "README.md"
-requires-python = ">=3.9"
-dependencies = ["numpy","pandas","scqubits"]
+
+dependencies = [
+    "numpy>=1.20",
+    "pandas>=1.5",
+    "scqubits>=3.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff"
+]
+
+[project.urls]
+Homepage = "https://github.com/FirasAbouzahr/pyPalace"
+Repository = "https://github.com/FirasAbouzahr/pyPalace"
+Issues = "https://github.com/FirasAbouzahr/pyPalace/issues"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -15,4 +34,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-
+include = ["pypalace*"]
