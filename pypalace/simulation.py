@@ -20,7 +20,6 @@ class Simulation:
     
         '''
     
-    
         self.path_to_palace = path_to_palace
         self.config = config
         self.path_to_json = self.config.config_name
@@ -89,17 +88,17 @@ class Simulation:
                 
     def get_capacitance_matrix(self):
         
-        if self.config.sim["Problem"]["Type"] != "Electrostatic":
+        if self.config.config["Problem"]["Type"] != "Electrostatic":
             raise ValueError("Simulation type is not electrostatic, no capacitance matrix to extract")
         else:
-            cap_matrix_results = self.config.sim["Problem"]["Output"]+"/terminal-C.csv"
+            cap_matrix_results = self.config.config["Problem"]["Output"]+"/terminal-C.csv"
             cap_matrix = pd.read_csv(cap_matrix_results)
             cap_matrix = cap_matrix.drop(columns=['        i'])
             
-            meshfile = self.config.sim["Model"]["Mesh"]
+            meshfile = self.config.config["Model"]["Mesh"]
             mesh_attributes = Tools.get_mesh_attributes(meshfile)
             
-            setup = self.config.sim["Boundaries"]["Terminal"]
+            setup = self.config.config["Boundaries"]["Terminal"]
             names = []
             for terminal in setup:
                 cap_matrix_index = terminal["Index"]
@@ -113,12 +112,12 @@ class Simulation:
     
     def get_eigenFrequencies(self):
     
-        if self.config.sim["Problem"]["Type"] != "Eigenmode":
+        if self.config.config["Problem"]["Type"] != "Eigenmode":
             raise ValueError("Simulation type is not eigenmode, no eigenfrequencies to extract")
             
         else:
         
-            freq_results = self.config.sim["Problem"]["Output"]+"/eig.csv"
+            freq_results = self.config.config["Problem"]["Output"]+"/eig.csv"
             freqs = pd.read_csv(freq_results,usecols = [0,1,2,3])
             freqs.columns = ["mode","frequency_GHz","frequency_Im","Q"]
             
@@ -126,11 +125,11 @@ class Simulation:
                 
     def get_portEPR(self,port_index:int):
     
-        if self.config.sim["Problem"]["Type"] != "Eigenmode":
+        if self.config.config["Problem"]["Type"] != "Eigenmode":
             raise ValueError("Simulation type is not eigenmode, no port EPR to extract")
             
         try:
-            EPR_results = self.config.sim["Problem"]["Output"]+"/port-EPR.csv"
+            EPR_results = self.config.config["Problem"]["Output"]+"/port-EPR.csv"
             EPR = pd.read_csv(EPR_results,usecols=[0,port_index + 1])
             EPR.columns = ["mode","EPR"]
             return
@@ -140,12 +139,12 @@ class Simulation:
 
     def get_Sij(self,index1:int,index2:int):
     
-        if self.config.sim["Problem"]["Type"] != "Driven":
+        if self.config.config["Problem"]["Type"] != "Driven":
             raise ValueError("Simulation type is not Driven, no port S-parameters to extract")
             
         else:
         
-            Smatrix_results = self.config.sim["Problem"]["Output"]+"/port-S.csv"
+            Smatrix_results = self.config.config["Problem"]["Output"]+"/port-S.csv"
             Smatrix = pd.read_csv(Smatrix_results)
             
             ReSij =  '             |S[{}][{}]| (dB)'.format(index1,index2)
@@ -156,7 +155,7 @@ class Simulation:
                 ReSij_column = Smatrix[ReSij].to_numpy()
                 ImSij_column = Smatrix[ImSij].to_numpy()
                 columns = ["frequency_GHz","|S[{}][{}]| (dB)".format(index1,index2),"arg(S[{}][{}]) (deg)".format(index1,index2)]
-                Scustom = pd.Dataframe{columns[0]:f_GHz,columns[1]:ReSij_column,columns[2]:ImSij_column}
+                Scustom = pd.Dataframe({columns[0]:f_GHz,columns[1]:ReSij_column,columns[2]:ImSij_column})
                 return Scustom
                 
             except:

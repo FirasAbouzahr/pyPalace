@@ -6,7 +6,7 @@ class Config:
     
         self.config_name = config_name
         self.tracker = []
-        self.sim = {}
+        self.config = {}
         self.saved = False
         
     @classmethod
@@ -17,7 +17,7 @@ class Config:
         this_config = cls(config_name)  # create instance
 
         this_config.tracker = ["Problem","Solver","Model","Domains","Boundaries"]
-        this_config.sim = existing_config
+        this_config.config = existing_config
 
         return this_config
         
@@ -27,7 +27,7 @@ class Config:
 
         self.Type = Type.lower().capitalize()
 
-        self.sim["Problem"] = {"Type":Type,
+        self.config["Problem"] = {"Type":Type,
                                "Verbose":Verbose,
                                "Output":Output}
 
@@ -45,7 +45,7 @@ class Config:
         if Refinement != None:
             model_dict["Refinement"] = Refinement
 
-        self.sim["Model"] = model_dict
+        self.config["Model"] = model_dict
 
     def add_Domains(self,Materials,Postprocessing = []):
         self.tracker.append("Domains")
@@ -67,7 +67,7 @@ class Config:
 
                 domain_dict["Postprocessing"] = postprocessing_dict
 
-        self.sim["Domains"] = domain_dict
+        self.config["Domains"] = domain_dict
         
     def add_Boundaries(self,BCs,Postprocessing = []):
         self.tracker.append("Boundaries")
@@ -110,7 +110,7 @@ class Config:
             
             boundary_dict["Postprocessing"] = postprocessing_dict
             
-        self.sim["Boundaries"] = boundary_dict
+        self.config["Boundaries"] = boundary_dict
 
     def add_Solver(self,Simulation,Order=1,Device="CPU",Linear=None):
         self.tracker.append("Solver")
@@ -127,7 +127,7 @@ class Config:
         else:
             solver_dict["Linear"] = Linear
 
-        self.sim["Solver"] = solver_dict
+        self.config["Solver"] = solver_dict
 
     def save_config(self,check_validity = True):
     
@@ -145,18 +145,18 @@ class Config:
                     
             if len(validity_counter) == 4:
                 with open(self.config_name, "w") as f:
-                    json.dump(self.sim, f, indent=2)   # indent=4 makes it pretty-printed
+                    json.dump(self.config, f, indent=2)   # indent=4 makes it pretty-printed
                     
             else:
                 raise ValueError("Your AWS Palace configuration file is invalid, please add" + ", ".join(validity_counter) + "block(s)")
 
         else:
             with open(self.config_name, "w") as f:
-                json.dump(self.sim, f, indent=2)
+                json.dump(self.config, f, indent=2)
         
 
     def print_config(self):
-        print(json.dumps(self.sim, indent=2))
+        print(json.dumps(self.config, indent=2))
         
 
 #### Simulate ####
