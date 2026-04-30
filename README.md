@@ -4,12 +4,12 @@
 
 pyPalace is a Python toolkit for streamlining [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of superconducting quantum devices.
 
-At a high level, pyPalace is a wrapper around AWS Palace. It enables users to:
+At the top-level, pyPalace is a wrapper around AWS Palace. It enables users to:
 - build Palace configuration files,
 - run simulations (locally or on HPC systems),
 - and extract results cleanly using Python.
 
-More broadly, the package can be used for general electromagnetic modeling workflows. For superconducting devices, pyPalace includes quantum analysis tools such as Lumped Oscillator Modeling (LOM), Energy Participation Ratio (EPR) methods, and related techniques.
+For superconducting devices, pyPalace includes quantum analysis tools such as Lumped Oscillator Modeling (LOM), Energy Participation Ratio (EPR) methods, and other techniques to extract important design parameters.
 
 For questions, comments, or collaboration, contact:  
 [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu)
