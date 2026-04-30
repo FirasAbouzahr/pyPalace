@@ -83,3 +83,18 @@ class Tools:
                                 attributes_dict["Type"] += ["Volume"]
             
         return pd.DataFrame(attributes_dict,index = None)
+
+
+    def get_LJ_from_config(config:Config,JJ_index:int):
+        
+        LumpedPorts = config.config["Boundaries"]["LumpedPort"]
+        
+        for port in LumpedPorts:
+        
+            if port["Index"] == JJ_index:
+                LJ = port["L"]
+                break
+        
+        return LJ
+        
+        
