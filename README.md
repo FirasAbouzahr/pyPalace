@@ -1,5 +1,7 @@
 # pyPalace 
 
+[![Docs](https://img.shields.io/badge/docs-live-blue)](https://firasabouzahr.github.io/pyPalace/)
+
 pyPalace is a Python toolkit for streamlining [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of superconducting quantum devices.
 
 At a high level, pyPalace is a wrapper around AWS Palace. It enables users to:
