@@ -27,5 +27,7 @@ pip install -e .
 All pyPalace Examples can be found [here](Examples). More info to come soon.
 
  
-# API docs coming soon!!!
+# docs coming soon!!!
 
+## License
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.
