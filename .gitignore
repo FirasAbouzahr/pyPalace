@@ -31,3 +31,4 @@ Examples/example_01_eigenmode_EPR/example01_output/.DS_Store
 Examples/example_02_electrostatics_LOM/.ipynb_checkpoints/example02_notebook_pocketTransmon-checkpoint.ipynb
 Examples/example_02_electrostatics_LOM/.ipynb_checkpoints/example02_notebook_TransmonCross-checkpoint.ipynb
 Examples/example_01_eigenmode_EPR/.ipynb_checkpoints/qubit_res_eigenmode_example-checkpoint.ipynb
+/docs/build
