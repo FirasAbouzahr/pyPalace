@@ -110,29 +110,49 @@ class Simulation:
             
             return cap_matrix
     
-    def get_eigenFrequencies(self):
+    def get_frequency_eigenmode(self,mode:int):
     
         if self.config.config["Problem"]["Type"] != "Eigenmode":
-            raise ValueError("Simulation type is not eigenmode, no eigenfrequencies to extract")
+            raise ValueError("Simulation type is not eigenmode, no eigenfrequency to extract")
             
         else:
         
             freq_results = self.config.config["Problem"]["Output"]+"/eig.csv"
             freqs = pd.read_csv(freq_results,usecols = [0,1,2,3])
-            freqs.columns = ["mode","frequency_GHz","frequency_Im","Q"]
+            freqs.columns = ["m","frequency_GHz","frequency_Im","Q"]
+            f_i = freqs[freqs.m == mode].frequency_GHz.iloc[0]
             
-            return freqs
+            return f_i
+            
+            
+    def get_kappa_eigenmode(self,mode:int):
+    
+        if self.config.config["Problem"]["Type"] != "Eigenmode":
+            raise ValueError("Simulation type is not eigenmode, no k_int to extract")
+            
+        else:
+        
+            freq_results = self.config.config["Problem"]["Output"]+"/eig.csv"
+            freqs = pd.read_csv(freq_results,usecols = [0,1,2,3])
+            freqs.columns = ["m","frequency_GHz","frequency_Im","Q"]
+            f_i = freqs[freqs.m == mode].frequency_GHz.iloc[0]
+            Q_i = freqs[freqs.m == mode].Q.iloc[0]
+            
+            kappa_i_int = f_i/Q_i
+            
+            return kappa_i_int
                 
-    def get_portEPR(self,port_index:int):
+    def get_portEPR(self,port_index:int,mode:int):
     
         if self.config.config["Problem"]["Type"] != "Eigenmode":
             raise ValueError("Simulation type is not eigenmode, no port EPR to extract")
             
         try:
             EPR_results = self.config.config["Problem"]["Output"]+"/port-EPR.csv"
-            EPR = pd.read_csv(EPR_results,usecols=[0,port_index + 1])
-            EPR.columns = ["mode","EPR"]
-            return
+            EPR = pd.read_csv(EPR_results,usecols=[0,port_index])
+            EPR.columns = ["m","EPR"]
+            p_i = EPR[EPR.m == mode].EPR.iloc[0]
+            return p_i
             
         except:
             raise ValueError("Are you sure you defined a port?")
