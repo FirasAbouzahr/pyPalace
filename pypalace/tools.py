@@ -1,3 +1,10 @@
+"""
+Utility functions for working with pyPalace inputs and outputs.
+
+This module provides helper functions for extracting mesh metadata and
+simulation parameters from Palace mesh and configuration files.
+"""
+
 import pandas as pd
 import subprocess
 import numpy as np
@@ -6,7 +13,29 @@ from .config import Config
 
 class Tools:
 
+    """
+    General utility functions used by pyPalace workflows.
+
+    These functions support mesh attribute extraction and retrieval of
+    simulation parameters from :class:`pypalace.config.Config` objects.
+    """
+
     def get_mesh_attributes(filename):
+        """
+        Extract physical attribute names, IDs, and entity types from a mesh file.
+
+        Supported mesh formats include ``.bdf`` and ``.msh`` files.
+
+        Parameters
+        ----------
+        filename : str
+            Path to the mesh file.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame with columns ``Name``, ``ID``, and ``Type``.
+        """
 
         attributes_list = []
         attributes_dict = {"Name":[],"ID":[],"Type":[]}
@@ -86,6 +115,25 @@ class Tools:
 
 
     def get_LJ_from_config(config:Config,JJ_index:int):
+    
+        """
+        Extract the Josephson inductance from a Palace configuration.
+
+        This searches the ``config["Boundaries"]["LumpedPort"]`` section for a
+        lumped port with the specified index and returns its inductance value.
+
+        Parameters
+        ----------
+        config : pypalace.config.Config
+            Config object containing the Palace simulation setup.
+        JJ_index : int
+            Index of the lumped port representing the Josephson junction.
+
+        Returns
+        -------
+        float
+            Josephson inductance.
+        """
         
         LumpedPorts = config.config["Boundaries"]["LumpedPort"]
         

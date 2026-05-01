@@ -1,10 +1,30 @@
+"""
+Helper utilities for constructing AWS Palace configuration dictionaries.
+
+This module provides builder-style functions that mirror the structure of the
+AWS Palace input file (e.g., Model, Domains, Boundaries, Solver). These
+functions return dictionaries formatted for use with
+:class:`pypalace.config.Config`.
+"""
+
 import numpy as np
 
 
 class Model:
 
+    """
+    Helper functions for generating ``config["Model"]`` arguments
+    for use with :meth:`pypalace.config.Config.add_Model`.
+
+    These functions mirror AWS Palace model and mesh-refinement settings
+    and return dictionaries formatted for the Palace configuration file.
+
+    See the `AWS Palace Model documentation <https://awslabs.github.io/palace/stable/config/model/>`_
+    for full details on model and refinement options.
+    """
+    
+    @staticmethod
     def Refinement(Tol=None,MaxIts=None,MaxSize=None,Nonconformal=None,UpdateFraction=None,UniformLevels=None,Boxes=None,Spheres=None,SaveAdaptMesh=None,SaveAdaptIterations=None):
-        
         refinement_list = np.array([Tol,MaxIts,MaxSize,Nonconformal,UpdateFraction,UniformLevels,Boxes,Spheres,SaveAdaptMesh,SaveAdaptIterations])
         refinement_labels = np.array(["Tol","MaxIts","MaxSize","Nonconformal","UpdateFraction","UniformLevels","Boxes","Spheres","SaveAdaptMesh","SaveAdaptIterations"])
         refinement_mask = refinement_list[:,] == None
@@ -19,14 +39,29 @@ class Model:
         
         return refinement_dict
     
+    @staticmethod
     def Refinement_Boxes(Levels,BoundingBoxMin,BoundingBoxMax):
         return {"Levels":Levels,"BoundingBoxMin":BoundingBoxMin,"BoundingBoxMax":BoundingBoxMax}
     
+    @staticmethod
     def Refinement_Spheres(Levels,Center,Radius):
         return {"Levels":Levels,"Center":Center,"Radius":Radius}
 
 class Domains:
+
+    """
+    Helper functions for generating ``config["Domains"]`` arguments
+    for use with :meth:`pypalace.config.Config.add_Domains`.
+
+    These functions mirror AWS Palace domain, material, and domain-level
+    postprocessing definitions and return dictionaries formatted for the
+    Palace configuration file.
+
+    See the `AWS Palace Domains documentation <https://awslabs.github.io/palace/stable/config/domains/>`_
+    for full details on materials and domain postprocessing.
+    """
     
+    @staticmethod
     def Material(Attributes,Permeability,Permittivity,LossTan=None,Conductivity=None,LondonDepth=None,MaterialAxes=None):
         dict = {"Attributes":Attributes,
                 "Permeability":Permeability,
@@ -44,13 +79,15 @@ class Domains:
                 dict[j] = i
 
         return dict
-
+        
+    @staticmethod
     def Postprocessing_Energy(Index,Attributes):
         dict  = {"Index":Index,
                  "Attributes":Attributes}
         
         return dict,"Energy"
-        
+    
+    @staticmethod
     def Postprocessing_Probe(Index,Center):
         dict  = {"Index":Index,
                  "Center":Center}
@@ -58,20 +95,36 @@ class Domains:
         return dict,"Probe"
 
 class Boundaries:
-    
+
+    """
+    Helper functions for generating ``config["Boundaries"]`` arguments
+    for use with :meth:`pypalace.config.Config.add_Boundaries`.
+
+    These functions mirror AWS Palace boundary-condition and boundary-level
+    postprocessing definitions and return dictionaries formatted for the
+    Palace configuration file.
+
+    See the `AWS Palace Boundaries documentation <https://awslabs.github.io/palace/stable/config/boundaries/>`_
+    for full details on supported boundary conditions.
+    """
+
+    @staticmethod
     def PEC(Attributes):
         dict = {"Attributes":Attributes}
         return dict,"PEC"
-    
+        
+    @staticmethod
     def PMC(Attributes):
         dict = {"Attributes":Attributes}
         return dict,"PMC"
         
+    @staticmethod
     def Absorbing(Attributes,Order):
         dict = {"Attributes":Attributes,
                 "Order":Order}
         return dict,"Absorbing"
         
+    @staticmethod
     def Conductivity(Attributes,Conductivity,Permeability,Thickness=None):
     
         dict = {"Attributes":Attributes,
@@ -83,14 +136,16 @@ class Boundaries:
         
         return dict,"Conductivity"
         
+    @staticmethod
     def Ground(Attributes):
         dict = {"Attributes":Attributes}
         return dict,"Ground"
-        
+    @staticmethod
     def Terminal(Index,Attributes):
         dict = {"Index":Index,"Attributes":Attributes}
         return dict,"Terminal"
-    
+        
+    @staticmethod
     def LumpedPort(Index,Attributes,Direction=None,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
     
         dict = {"Index":Index,
@@ -113,10 +168,12 @@ class Boundaries:
             dict[LP_labels[i]] = LP_list[i]
 
         return dict,"LumpedPort"
-        
+    
+    @staticmethod
     def Elements(Attributes,Direction,CoordinateSystem):
         return {"Attributes":Attributes,"Direction":Direction,"CoordinateSystem":CoordinateSystem}
-        
+    
+    @staticmethod
     def WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None):
         dict = {"Index":Index,
                 "Attributes":Attributes}
@@ -132,7 +189,8 @@ class Boundaries:
             dict[WP_labels[i]] = WP_list[i]
 
         return dict,"WavePort"
-    
+        
+    @staticmethod
     def Impedance(Attributes,Rs=None,Ls=None,Cs=None):
 
         dict = {"Attributes":Attributes}
@@ -150,6 +208,7 @@ class Boundaries:
         return dict,"Impedance"
     
     ## need to fix syntax to match lumped port ##
+    @staticmethod
     def SurfaceCurrent(Index,Attributes,Direction,CoordinateSystem=None,Elements=None):
         dict = {"Index":Index,
                 "Attributes":Attributes,
@@ -164,7 +223,8 @@ class Boundaries:
             dict["CoordinateSystem"] = CoordinateSystem
         
         return dict,"SurfaceCurrent"
-
+        
+    @staticmethod
     def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
         dict = {"Index":Index,
                 "Attributes":Attributes,
@@ -175,7 +235,7 @@ class Boundaries:
 
         return dict,"Dielectric"
         
-        
+    @staticmethod
     def Postprocessing_SurfaceFlux(Index,Attributes,Type,TwoSided=False,Center=None):
         dict = {"Index":Index,
                 "Attributes":Attributes,
@@ -190,13 +250,26 @@ class Boundaries:
         return dict,"SurfaceFlux"
 
 class Solver:
-    
+
+    """
+    Helper functions for generating ``config["Solver"]`` arguments
+    for use with :meth:`pypalace.config.Config.add_Solver`.
+
+    These functions mirror AWS Palace solver configurations for electrostatic,
+    magnetostatic, eigenmode, driven, and linear simulations.
+
+    See the `AWS Palace Solver documentation <https://awslabs.github.io/palace/stable/config/solver/>`_
+    for full details on solver options.
+    """
+    @staticmethod
     def Electrostatic(Save):
         return {"Save":Save},"Electrostatic"
-    
+        
+    @staticmethod
     def Magnetostatic(Save):
         return {"Save":Save},"Magnetostatic"
-
+        
+    @staticmethod
     def Eigenmode(Target,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
 
         eigenmode_dict = {"N":N,
@@ -215,7 +288,7 @@ class Solver:
 
         return eigenmode_dict,"Eigenmode"
         
-    
+    @staticmethod
     def Driven(MinFreq=None,MaxFreq=None,FreqStep=None,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
         
         driven_dict = {}
@@ -237,6 +310,7 @@ class Solver:
 
         return driven_dict,"Driven"
         
+    @staticmethod
     def Driven_Samples(Type=None,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddtoPROM=None):
         
         samples_dict = {}
@@ -252,7 +326,8 @@ class Solver:
             samples_dict[samples_labels[i]] = samples_list[i]
         
         return samples_dict
-
+        
+    @staticmethod
     def Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
 
         Linear_dict = {"Type":Type,

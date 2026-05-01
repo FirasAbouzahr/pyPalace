@@ -1,4 +1,4 @@
-pyPalace API
+pypalace package
 ================
 
 Submodules
