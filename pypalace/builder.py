@@ -261,6 +261,7 @@ class Solver:
     See the `AWS Palace Solver documentation <https://awslabs.github.io/palace/stable/config/solver/>`_
     for full details on solver options.
     """
+    
     @staticmethod
     def Electrostatic(Save):
         return {"Save":Save},"Electrostatic"
@@ -326,6 +327,23 @@ class Solver:
             samples_dict[samples_labels[i]] = samples_list[i]
         
         return samples_dict
+        
+    @staticmethod
+    def Transient(Type=None,Excitation=None,ExcitationFreq=None,ExcitationWidth=None,MaxTime=None,TimeStep=None,SaveStep=None,Order=None,RelTol=None,AbsTol=None):
+        
+        TD_dict = {}
+        
+        TD_list = np.array([Type,Excitation,ExcitationFreq,ExcitationWidth,MaxTime,TimeStep,SaveStep,Order,RelTol,AbsTol])
+        TD_labels = np.array(["Type","Excitation","ExcitationFreq","ExcitationWidth","MaxTime","TimeStep","SaveStep","Order","RelTol","AbsTol"])
+        TD_mask = TD_list[:,] == None
+        
+        TD_list = TD_list[~TD_mask]
+        TD_labels = TD_labels[~TD_mask]
+
+        for i in range(len(TD_list)):
+            TD_dict[TD_labels[i]] = TD_list[i]
+
+        return TD_dict,"Transient"
         
     @staticmethod
     def Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
