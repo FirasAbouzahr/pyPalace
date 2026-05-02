@@ -2,13 +2,13 @@ from pypalace import Config,Simulation,Tools
 import numpy as np
 from pypalace.analysis import EPR
 
-# check modes using Paraview
+''' use Simulation.plot_field() to check which modes correspond to the qubit & resonator '''
+'''See example01_field_visualization.py '''
 qubit_mode = 1
 resonator_mode = 2
 JJ_port_index = 1 # taken from config file generated in example01_script.py
 
 ''' paths '''
-path_to_palace = "/Users/firasabouzahr/Desktop/AWSPalace/install/bin/palace-arm64.bin"
 mesh_dir = "mesh/"
 config_dir = "config/"
 
@@ -17,7 +17,7 @@ meshfile = mesh_dir + "qubit_resonator_mesh.bdf"
 my_config = Config.load_config(config_dir + "example01.json")
  
 ''' create simulation object to extract results from completeted simulation '''
-cavity_qubit_sim = Simulation(my_config,path_to_palace) # define simulation object
+cavity_qubit_sim = Simulation(my_config,path_to_palace="") # define simulation object, don't need to specify path for analysis only
 
 ''' EPR analysis '''
 LJ = Tools.get_LJ_from_config(my_config,JJ_port_index) # need it for EPR

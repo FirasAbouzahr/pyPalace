@@ -351,6 +351,8 @@ class Simulation:
                    cmap=None,
                    show=True,
                    save=None):
+                   
+        index = index - 1
         
         """
         Plot a field from Palace simulation output (ParaView/PVD).
@@ -502,13 +504,15 @@ class Simulation:
         else:
             vmin, vmax = scale
 
+        fig,ax = plt.subplots()
         sc = plt.scatter(x_plot, y_plot, c=data, s=1, cmap=cmap, vmin=vmin, vmax=vmax)
         plt.colorbar(sc)
+        plt
         
+        
+        if save != None:
+            plt.savefig(save)
         if show == True:
             plt.show()
-        else:
-            plt.savefig(save)
-            plt.close()
             
         
