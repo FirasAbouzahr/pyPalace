@@ -9,6 +9,8 @@ capacitance matrices, eigenfrequencies, linewidths, and S-parameters.
 
 import pandas as pd
 import subprocess
+import matplotlib.pyplot as plt
+import pyvista as pv
 import numpy as np
 import json
 from .config import Config
@@ -298,9 +300,9 @@ class Simulation:
         Parameters
         ----------
         index1 : int
-            First port index.
+            input port index.
         index2 : int
-            Second port index.
+            output port index.
 
         Returns
         -------
@@ -334,5 +336,179 @@ class Simulation:
                 
             except:
                 raise ValueError("Selected S_ij matrix elements do not exist, please check specified indices")
+                    
 
+        
+
+    def plot_field(self,
+                   field,
+                   index,
+                   normal="z",
+                   origin=(0, 0, 0),
+                   quantity="magnitude",
+                   part="real",
+                   scale=None,
+                   cmap=None,
+                   show=True,
+                   save=None):
+        
+        """
+        Plot a field from Palace simulation output (ParaView/PVD).
+
+        Parameters
+        ----------
+        field : str
+            Field to visualize. Supported options:
+            "E" (electric field), "B" (magnetic field),
+            "U_e" (electric energy density),
+            "U_m" (magnetic energy density),
+            "S" (Poynting vector).
+
+        index : int
+            Mode index (time step) to visualize.
+
+        normal : str or tuple, optional
+            Normal vector defining the slice plane. Default is "z"
+            (i.e., an xy-plane slice). Can also be a 3-tuple.
+
+        origin : tuple, optional
+            Origin of the slice plane. Default is (0, 0, 0).
+
+        quantity : str, optional
+            Quantity to plot for vector fields ("E", "B", "S").
+            Options:
+            - "magnitude" : ||field||
+            - "x", "y", "z" : corresponding Cartesian component
+
+            Ignored for scalar fields ("U_e", "U_m").
+            
+        part : str, optional
+            For vector fields ("E", "B", "S") and when `quantity` is not set to `"magnitude"`
+            selects which part of the complex field to visualize:
+            
+            - "real" : real part (default)
+            - "imag" : imaginary part
+            
+        scale : tuple, optional
+            Color scale limits for the plot, given as (vmin, vmax).
+            If None (default), limits are set automatically:
+            - For "magnitude": based on the 1st–99th percentile range
+            - For components: symmetric about zero using the 99th percentile
+
+        cmap : str, optional
+            Matplotlib colormap to use for visualization.
+            If None (default), uses:
+            - "inferno" for magnitude plots
+            - "RdBu_r" for component plots (diverging, centered at zero)
+            
+        show : bool, optional
+            If True (default), display the plot.
+
+        save : str or None, optional
+            If provided, save the plot to the specified file path
+            If None (default), the plot is not saved.
+
+        Notes
+        -----
+        - Vector fields are reconstructed from real and imaginary components.
+        - Eigenmode fields are complex; "magnitude" is phase-independent,
+          while individual components depend on the chosen phase convention.
+        """
+        
+        if self.config.config["Problem"]["Type"] == "Electrostatic":
+        
+            vector_fields = ["E"]
+            scalar_fields = ["V","U_e"]
+            field_components = {"x":0,"y":1,"z":2}
+            
+        elif self.config.config["Problem"]["Type"] == "Magnetostatic":
+        
+            vector_fields = ["B","A"]
+            scalar_fields = ["U_m"]
+        
+        else:
+            vector_fields = ["E","B","S"]
+            scalar_fields = ["U_e","U_m"]
+        
+        field_components = {"x":0,"y":1,"z":2}
+        
+        
+        if field not in vector_fields and field not in scalar_fields:
+            raise ValueError('Specified field is unknown, available options are "E","B","S","U_e","U_m"')
+            
+            
+        type = self.config.config["Problem"]["Type"].lower()
+        paraview_data = self.config.config["Problem"]["Output"] + "/paraview/" + type + "/{}.pvd".format(type)
+            
+        reader = pv.get_reader(paraview_data)
+        reader.set_active_time_point(index)
+        mb = reader.read()
+        block=mb[0]
+
+        current_slice = block.slice(normal=normal, origin=origin)
+    
+        if field in vector_fields:
+    
+            try:
+                real = current_slice.point_data["{}_real".format(field)]
+                imag = current_slice.point_data["{}_imag".format(field)]
+                
+                if quantity == "magnitude":
+                    F = real + 1j * imag
+                    mag = np.linalg.norm(F, axis=1)
+                    data = mag
+                else:
+                    if part == "real":
+                        data = real[:,field_components[quantity]]
+                    else:
+                        data = imag[:,field_components[quantity]]
+            
+            except:
+                F = current_slice.point_data["{}".format(field)]
+                if quantity == "magnitude":
+                    mag = np.linalg.norm(F, axis=1)
+                    data = mag
+                else:
+                    data = F[:,field_components[quantity]]
+            
+        else:
+            data = current_slice.point_data["{}".format(field)]
+            
+        points = current_slice.points
+        
+        if normal == "z":
+            x_plot = points[:, 0]
+            y_plot = points[:, 1]
+        elif normal == "y":
+            x_plot = points[:, 0]
+            y_plot = points[:, 2]
+        elif normal == "x":
+            x_plot = points[:, 1]
+            y_plot = points[:, 2]
+        else:
+            raise ValueError("normal must be 'x', 'y', or 'z'")
+
+        # choose colormap
+        if cmap is None:
+            cmap = "inferno" if quantity == "magnitude" else "RdBu_r"
+
+        # autoscale
+        if scale is None:
+            if quantity == "magnitude":
+                vmin, vmax = np.percentile(data, [1, 99])
+            else:
+                vmax = np.percentile(np.abs(data), 99)
+                vmin = -vmax
+        else:
+            vmin, vmax = scale
+
+        sc = plt.scatter(x_plot, y_plot, c=data, s=1, cmap=cmap, vmin=vmin, vmax=vmax)
+        plt.colorbar(sc)
+        
+        if show == True:
+            plt.show()
+        else:
+            plt.savefig(save)
+            plt.close()
+            
         

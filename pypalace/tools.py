@@ -19,7 +19,8 @@ class Tools:
     These functions support mesh attribute extraction and retrieval of
     simulation parameters from :class:`pypalace.config.Config` objects.
     """
-
+    
+    @staticmethod
     def get_mesh_attributes(filename):
         """
         Extract physical attribute names, IDs, and entity types from a mesh file.
@@ -113,7 +114,7 @@ class Tools:
             
         return pd.DataFrame(attributes_dict,index = None)
 
-
+    @staticmethod
     def get_LJ_from_config(config:Config,JJ_index:int):
     
         """
@@ -144,5 +145,4 @@ class Tools:
                 break
         
         return LJ
-        
         

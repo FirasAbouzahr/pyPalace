@@ -175,3 +175,33 @@ class LOM:
         
         return {"frequency_GHz":f_q,"anharmonicity_MHz":alpha}
         
+
+#class driven_resonator:
+#    
+#    def get_resonator_parameters_driven(S_ij):
+#
+#        """
+#        Extracts f_r, kappa, Q_c, and Q_i from a frequency-domain driven simulation of a superconducting resonator.
+#
+#        Fit complex S21 data via the Diameter Correction Method (DCM)
+#
+#        Parameters
+#        ----------
+#        S_ij : pandas.DataFrame
+#            DataFrame containing frequency, magnitude (dB), and phase (degrees). Easily obtained from pypalace.simulation.get_Sij.
+#        index2 : int
+#            output port index.
+#
+#        Returns
+#        -------
+#        dictionary
+#            DataFrame containing frequency, magnitude (dB), and phase (degrees).
+#
+#        Raises
+#        ------
+#        ValueError
+#            If the simulation type is not driven or if the specified indices are invalid.
+#        """
+#            
+#                
+
