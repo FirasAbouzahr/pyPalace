@@ -1,5 +1,5 @@
 """
-Configuration interface for constructing AWS Palace input files.
+Configuration interface for generating AWS Palace configuration files.
 
 This module provides the :class:`Config` class for building, validating,
 and saving Palace JSON configuration files.
@@ -121,7 +121,7 @@ class Config:
         Materials : list
             List of material definitions generated using :func:`pypalace.builder.Domains.Material`.
         Postprocessing : list, optional
-            List of Domains postprocessing definitions generated using :mod:`pypalace.builder.Domains`  postprocessing functions.
+            List of Domains postprocessing definitions generated using :mod:`pypalace.builder.Domains` postprocessing functions.
         """
     
         self.tracker.append("Domains")

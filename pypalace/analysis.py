@@ -1,11 +1,8 @@
 """
-Quantum analysis utilities for extracting qubit parameters from
-electromagnetic simulation results.
+Quantum analysis utilities for extracting 
+superconducting circuit Hamiltonian parameters 
+from electromagnetic simulation results.
 
-This module provides tools for computing quantities such as anharmonicity,
-dispersive shifts, coupling strengths, and Hamiltonian parameters using
-methods based on energy participation ratios (EPR) and lumped oscillator
-models (LOM).
 """
 
 
