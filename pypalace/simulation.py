@@ -351,8 +351,6 @@ class Simulation:
                    cmap=None,
                    show=True,
                    save=None):
-                   
-        index = index - 1
         
         """
         Plot a field from Palace simulation output (ParaView/PVD).
@@ -416,6 +414,8 @@ class Simulation:
         - Eigenmode fields are complex; "magnitude" is phase-independent,
           while individual components depend on the chosen phase convention.
         """
+        
+        index = index - 1
         
         if self.config.config["Problem"]["Type"] == "Electrostatic":
         
