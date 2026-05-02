@@ -33,13 +33,13 @@ Install locally:
 
 ---
 
-## Examples 
+## Examples
 
 Examples can be found in the [examples](Examples) directory.
 
 * Example 00 (Introduction to pyPalace - **coming soon**)
-* Example 01 (eigenmode simulations & EPR analysis of a qubit-cavity system)
-* Example 02 (electrostatic simulations & LOM analysis of Transmon qubits)
+* [Example 01](example_01_eigenmode_EPR) (eigenmode simulations & EPR analysis of a qubit-cavity system)
+* [Example 02](example_02_electrostatics_LOM) (electrostatic simulations & LOM analysis of Transmon qubits)
 * Example 03 (driven simulation of a resonator & DCM fitting to S21 - **coming soon**)
 
 ---
