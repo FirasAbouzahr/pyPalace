@@ -1,0 +1,76 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "example03_output"
+  },
+  "Model": {
+    "Mesh": "mesh/driven_resonator.bdf",
+    "L0": 1e-06
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 11.45,
+        "LossTan": 1e-07
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        3,
+        4,
+        7,
+        8
+      ]
+    },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          5
+        ],
+        "Direction": "+Y",
+        "Excitation": true,
+        "R": 50
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          6
+        ],
+        "Direction": "-Y",
+        "R": 50
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "MinFreq": 7.074,
+      "MaxFreq": 7.076,
+      "FreqStep": 5e-05,
+      "SaveStep": 1
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "Default",
+      "Tol": 1e-06,
+      "MaxIts": 50
+    }
+  }
+}
