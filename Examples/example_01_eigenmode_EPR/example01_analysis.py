@@ -17,7 +17,7 @@ meshfile = mesh_dir + "qubit_resonator_mesh.bdf"
 my_config = Config.load_config(config_dir + "example01.json")
  
 ''' create simulation object to extract results from completeted simulation '''
-cavity_qubit_sim = Simulation(my_config,path_to_palace="") # define simulation object, don't need to specify path for analysis only
+cavity_qubit_sim = Simulation(my_config,None) # define simulation object
 
 ''' EPR analysis '''
 LJ = Tools.get_LJ_from_config(my_config,JJ_port_index) # need it for EPR
