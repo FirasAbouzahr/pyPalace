@@ -1,6 +1,7 @@
 # pyPalace 
 
 [![Docs](https://img.shields.io/badge/docs-live-blue)](https://firasabouzahr.github.io/pyPalace/)
+[![PyPI version](https://img.shields.io/pypi/v/pypalace.svg)](https://pypi.org/project/pypalace/)
 
 pyPalace is a Python toolkit for streamlining [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of superconducting quantum devices.
 
@@ -21,15 +22,22 @@ For questions, comments, or collaboration, contact:
 
 > **Note:** pyPalace requires AWS Palace to be installed separately.
 
+### For users
+
+```bash
+pip install pypalace
+```
+
+### For developers
+
 Clone the repository:
 
-    cd <your_directory>
-    git clone https://github.com/FirasAbouzahr/pyPalace.git
-    cd pyPalace
-
-Install locally:
-
-    pip install -e .
+```bash
+cd <your_directory>
+git clone https://github.com/FirasAbouzahr/pyPalace.git
+cd pyPalace
+pip install -e .
+```
 
 ---
 

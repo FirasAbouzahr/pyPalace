@@ -30,6 +30,7 @@ dev = [
 Homepage = "https://github.com/FirasAbouzahr/pyPalace"
 Repository = "https://github.com/FirasAbouzahr/pyPalace"
 Issues = "https://github.com/FirasAbouzahr/pyPalace/issues"
+PyPI = "https://pypi.org/project/pypalace/"
 
 [build-system]
 requires = ["setuptools>=61.0"]
