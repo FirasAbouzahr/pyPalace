@@ -9,5 +9,5 @@ In practice, you should first run [example03_script.py](example03_script.py) to 
 Below we plot the fit to the resonator lineshape as done in the analysis notebook.
 
 <p align="center">
-  <img src="Figures/resonator_lineshape" width="600">
+  <img src="Figures/resonator_lineshape.png" width="600">
 </p>
