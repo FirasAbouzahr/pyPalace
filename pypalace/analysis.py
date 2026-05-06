@@ -83,6 +83,15 @@ class EPR:
         -----
         Based on Eq. (11) of https://arxiv.org/pdf/2010.00620.
         """
+        
+        
+        EJ = phi0**2/((2*pi)**2*LJ)
+        w_q = 2 * np.pi * f_q * 10**9
+        w_r = 2 * np.pi * f_r * 10**9
+        
+        chi = p_q * p_r * (hbar * w_q * w_r)/(4*EJ)
+        
+        return -chi / (2*np.pi)
     
     ## from https://arxiv.org/pdf/2010.00620
     @staticmethod
