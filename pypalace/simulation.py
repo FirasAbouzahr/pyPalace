@@ -323,21 +323,20 @@ class Simulation:
             Smatrix_results = self.config.config["Problem"]["Output"]+"/port-S.csv"
             Smatrix = pd.read_csv(Smatrix_results)
             
-            ReSij =  '             |S[{}][{}]| (dB)'.format(index1,index2)
-            ImSij =  '        arg(S[{}][{}]) (deg.)'.format(index1,index2)
+            ReSij =  '             |S[{}][{}]| (dB)'.format(index2,index1)
+            ImSij =  '        arg(S[{}][{}]) (deg.)'.format(index2,index1)
             
             try:
                 f_GHz = Smatrix['        f (GHz)'].to_numpy()
                 ReSij_column = Smatrix[ReSij].to_numpy()
                 ImSij_column = Smatrix[ImSij].to_numpy()
                 columns = ["frequency_GHz","|S[{}][{}]| (dB)".format(index1,index2),"arg(S[{}][{}]) (deg)".format(index1,index2)]
-                Scustom = pd.Dataframe({columns[0]:f_GHz,columns[1]:ReSij_column,columns[2]:ImSij_column})
+                Scustom = pd.DataFrame({columns[0]:f_GHz,columns[1]:ReSij_column,columns[2]:ImSij_column})
                 return Scustom
                 
             except:
-                raise ValueError("Selected S_ij matrix elements do not exist, please check specified indices")
+                raise ValueError("Selected S_ij matrix elements do not exist, or are out of order, please check specified indices")
                     
-
         
 
     def plot_field(self,

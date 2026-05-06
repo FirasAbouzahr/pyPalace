@@ -2,24 +2,23 @@
 Quantum analysis utilities for extracting 
 superconducting circuit Hamiltonian parameters 
 from electromagnetic simulation results.
-
 """
-
 
 import pandas as pd
 import numpy as np
 import scqubits as scq
 from scipy.constants import e,hbar,h,pi
+import matplotlib.pyplot as plt
+from .utils import *
 phi0 = 2.0678338484619295e-15
 
 class EPR:
 
     """
+    
     Utilities for computing qubit parameters using the energy participation
-    ratio (EPR) formalism.
-
-    These methods implement standard relations between electromagnetic
-    simulation outputs and circuit Hamiltonian parameters.
+    ratio (EPR) method.
+    
     """
 
     ## from https://arxiv.org/pdf/2010.00620 (equation 9)
@@ -173,32 +172,71 @@ class LOM:
         return {"frequency_GHz":f_q,"anharmonicity_MHz":alpha}
         
 
-#class driven_resonator:
-#    
-#    def get_resonator_parameters_driven(S_ij):
-#
-#        """
-#        Extracts f_r, kappa, Q_c, and Q_i from a frequency-domain driven simulation of a superconducting resonator.
-#
-#        Fit complex S21 data via the Diameter Correction Method (DCM)
-#
-#        Parameters
-#        ----------
-#        S_ij : pandas.DataFrame
-#            DataFrame containing frequency, magnitude (dB), and phase (degrees). Easily obtained from pypalace.simulation.get_Sij.
-#        index2 : int
-#            output port index.
-#
-#        Returns
-#        -------
-#        dictionary
-#            DataFrame containing frequency, magnitude (dB), and phase (degrees).
-#
-#        Raises
-#        ------
-#        ValueError
-#            If the simulation type is not driven or if the specified indices are invalid.
-#        """
-#            
-#                
+class resonator_analysis:
+    
+    def get_resonator_parameters_driven(S_ij,show=False,save=None):
 
+        """
+        Extracts f_r and kappa from a frequency-domain driven simulation of a superconducting resonator.
+
+        Fit complex S21 data via the Diameter Correction Method (DCM)
+
+        Parameters
+        ----------
+        S_ij : pandas.DataFrame
+            DataFrame containing frequency, magnitude (dB), and phase (degrees). Otained from pypalace.Simulation.get_Sij.
+        
+        show : bool, optional
+            If True (default), display the S21 plot.
+
+        save : str or None, optional
+            If provided, save the plot to the specified file path
+            If None (default), the plot is not saved.
+        
+        Returns
+        -------
+        dictionary
+            DataFrame containing frequency, magnitude (dB), and phase (degrees).
+
+        Raises
+        ------
+        ValueError
+            If the simulation type is not driven or if the specified port indices are invalid.
+        """
+        
+        f0_fit, kappa_fit, theta0_fit, sign_fit, shift, R, f, S21_complex = DCM_backend.DCM_fit(S_ij)
+        
+        if show == True or save != None:
+            f_plot = np.linspace(f.min(),f.max(),500)
+            theta_fit = DCM_backend.angle_model(f_plot, f0_fit, kappa_fit, theta0_fit, sign_fit)
+            unit_fit = np.exp(1j * theta_fit)
+            original_fit = shift + R * unit_fit
+            
+            y_plot = 20*np.log10(np.abs(original_fit))
+            trough_loc = np.where(y_plot == y_plot.min())
+            freq_center = f_plot[trough_loc[0][0]]
+            
+            f = (f - freq_center)/1e3
+            f_plot = (f_plot - freq_center)/1e3
+
+            fig,ax = plt.subplots()
+            plt.scatter(f,20*np.log10(np.abs(S21_complex)),label="simulation data",color="mediumblue")
+            plt.plot(f_plot,y_plot,label="fit",color="crimson")
+            plt.xlabel(r"$\Delta$ [kHz]")
+            plt.ylabel(r"$||S_{21}||$ [dB]")
+            plt.legend(fontsize = 10)
+            
+            if save != None:
+                plt.savefig(save)
+                
+            if show == True:
+                plt.show()
+            
+        return {"frequency_GHz":f0_fit/1e9,"kappa_kHz":kappa_fit/1e3}
+        
+        
+        
+#    def get_resonator_kappa_eigenmode():
+#
+#        
+        
