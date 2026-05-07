@@ -1,6 +1,6 @@
 [project]
 name = "pypalace"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Python toolkit for superconducting circuit design and simulation workflows using AWS Palace."
 readme = "README.md"
 requires-python = ">=3.9"
