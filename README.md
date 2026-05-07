@@ -3,15 +3,9 @@
 [![Docs](https://img.shields.io/badge/docs-live-blue)](https://firasabouzahr.github.io/pyPalace/)
 [![PyPI version](https://img.shields.io/pypi/v/pypalace.svg)](https://pypi.org/project/pypalace/)
 
-pyPalace is a Python toolkit for streamlining [AWS Palace](https://awslabs.github.io/palace/stable/) electromagnetic simulations for the design and modeling of superconducting quantum devices.
+pyPalace is an open-source Python toolkit built around [AWS Palace](https://awslabs.github.io/palace/stable/) for the simulation and analysis of superconducting quantum devices. It enables users to build Palace configuration files, run simulations locally or on HPC systems, visualize computed electromagnetic fields, and extract simulation results through streamlined Python workflows.
 
-At the top-level, pyPalace is a python wrapper around AWS Palace. It enables users to:
-- build Palace configuration files,
-- run simulations (locally or on HPC systems),
-- visualize computed electromagnetic fields,
-- and extract simulation results cleanly.
-
-For superconducting devices, pyPalace includes quantum analysis tools such as Lumped Oscillator Modeling (LOM), Energy Participation Ratio (EPR) methods, and other techniques to extract important physical parameters.
+For superconducting devices, pyPalace includes quantum analysis tools based on methods such as Lumped Oscillator Modeling (LOM) and Energy Participation Ratio (EPR), along with related techniques for extracting important physical parameters of superconducting circuits and qubits.
 
 For questions, comments, or collaboration, contact:  
 [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu)
@@ -33,7 +27,6 @@ pip install pypalace
 Clone the repository:
 
 ```bash
-cd <your_directory>
 git clone https://github.com/FirasAbouzahr/pyPalace.git
 cd pyPalace
 pip install -e .
@@ -43,14 +36,18 @@ pip install -e .
 
 ## Examples
 
-Examples can be found in the [examples](Examples) directory.
+Examples can be found in the
+[Examples directory](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples).
 
 * Example 00 (Introduction to pyPalace - **coming soon**)
-* [Example 01](Examples/example_01_eigenmode_EPR) (eigenmode simulations & EPR analysis of a qubit-cavity system)
-* [Example 02](Examples/example_02_electrostatics_LOM) (electrostatic simulations & LOM analysis of Transmon qubits)
-* [Example 03](Examples/example_03_fdomain_driven_resonator) (driven simulation of a resonator & DCM fitting to S21)
+* [Example 01](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_01_eigenmode_EPR)
+(eigenmode simulations & EPR analysis of a qubit-cavity system)
+* [Example 02](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_02_electrostatics_LOM)
+(electrostatic simulations & LOM analysis of Transmon qubits)
+* [Example 03](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_03_fdomain_driven_resonator)
+(driven simulation of a resonator & DCM fitting to S21)
 
 ---
 
 ## License
-This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License – see the [LICENSE](https://github.com/FirasAbouzahr/pyPalace/blob/main/LICENSE) file for details.
