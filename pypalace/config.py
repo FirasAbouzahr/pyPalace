@@ -63,7 +63,7 @@ class Config:
         Type : str
             Problem type. Must be one of:
             "Electrostatic", "Magnetostatic", "Eigenmode",
-            "Driven", or "Transient".
+            "Driven", "Transient", or "BoundaryMode".
         Output : str
             Directory path where simulation results will be saved.
         Verbose : int, optional
@@ -73,6 +73,8 @@ class Config:
         self.tracker.append("Problem")
 
         self.Type = Type.lower().capitalize()
+        if self.Type == "Boundarymode":
+            self.Type = "BoundaryMode"
 
         self.config["Problem"] = {"Type":Type,
                                "Verbose":Verbose,
@@ -157,7 +159,8 @@ class Config:
         BCs : list
             List of boundary conditions definitions generated using :mod:`pypalace.builder.Boundaries` boundary condition functions.
         Postprocessing : list, optional
-            List of Boundaries postprocessing definitions generated using :mod:`pypalace.builder.Boundaries` postprocessing functions.
+            List of Boundaries postprocessing definitions generated using :mod:`pypalace.builder.Boundaries` postprocessing functions
+            (``SurfaceFlux``, ``Dielectric``, ``FarField``, and on recent Palace builds also ``Impedance`` and ``Voltage`` under ``Postprocessing``).
         """
         
         self.tracker.append("Boundaries")
@@ -168,8 +171,8 @@ class Config:
         BCs = np.array(BCs)
         Postprocessing = np.array(Postprocessing)
         
-        BC_labels_scalartype = ["PEC","PMC","Absorbing","WavePortPEC","Ground","ZeroCharge"]
-        BC_labels_arraytype = ["Impedance","Conductivity","LumpedPort","WavePort","SurfaceCurrent","Terminal","Periodic","FloquetWaveVector"]
+        BC_labels_scalartype = ["PEC","PMC","Absorbing","WavePortPEC","Ground","ZeroCharge","Periodic"]
+        BC_labels_arraytype = ["Impedance","Conductivity","LumpedPort","WavePort","SurfaceCurrent","Terminal"]
 
         
         for lab in BC_labels_scalartype:
@@ -186,17 +189,28 @@ class Config:
             if len(current) != 0:
                 boundary_dict[lab] = list(current)
         
-        Postprocessing_labels = ["SurfaceFlux","Dielectric"]
+        Postprocessing_arraytype = ["SurfaceFlux","Dielectric","Impedance","Voltage"]
+        Postprocessing_scalartype = ["FarField"]
         
         if len(Postprocessing) != 0:
             
-            for lab in Postprocessing_labels:
+            for lab in Postprocessing_arraytype:
             
                 mask = Postprocessing[:, 1] == lab
                 current = Postprocessing[mask][:,0]
                 
                 if len(current) != 0:
                     postprocessing_dict[lab] = list(current)
+            
+            for lab in Postprocessing_scalartype:
+                mask = Postprocessing[:, 1] == lab
+                current = Postprocessing[mask][:,0]
+                if len(current) > 1:
+                    raise ValueError(
+                        'Multiple "{}" postprocessing entries are not supported; supply at most one.'.format(lab)
+                    )
+                if len(current) == 1:
+                    postprocessing_dict[lab] = list(current)[0]
             
             boundary_dict["Postprocessing"] = postprocessing_dict
             

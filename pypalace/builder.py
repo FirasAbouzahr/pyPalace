@@ -105,7 +105,17 @@ class Boundaries:
     Palace configuration file.
 
     See the `AWS Palace Boundaries documentation <https://awslabs.github.io/palace/stable/config/boundaries/>`_
-    for full details on supported boundary conditions.
+    for the boundary types and postprocessing options that match the current **stable**
+    Palace release. If you build Palace from a newer **development** tree, additional
+    ``config["Boundaries"]["Postprocessing"]`` keys may exist there before they appear on
+    the stable site; for example ``Impedance`` and ``Voltage`` mode postprocessing are
+    described in `Palace main branch boundaries.md <https://github.com/awslabs/palace/blob/main/docs/src/config/boundaries.md>`_.
+
+    Note that ``Boundaries.Impedance`` builds the **surface impedance boundary condition**
+    (top-level ``"Impedance"`` array under ``Boundaries``), while
+    ``Boundaries.Postprocessing_Impedance`` builds an entry for **postprocessing** mode
+    impedance (nested under ``"Postprocessing"``); the JSON key name is the same, but the
+    object shape and meaning differ.
     """
 
     @staticmethod
@@ -140,6 +150,12 @@ class Boundaries:
     def Ground(Attributes):
         dict = {"Attributes":Attributes}
         return dict,"Ground"
+
+    @staticmethod
+    def ZeroCharge(Attributes):
+        dict = {"Attributes": Attributes}
+        return dict,"ZeroCharge"
+
     @staticmethod
     def Terminal(Index,Attributes):
         dict = {"Index":Index,"Attributes":Attributes}
@@ -189,7 +205,12 @@ class Boundaries:
             dict[WP_labels[i]] = WP_list[i]
 
         return dict,"WavePort"
-        
+
+    @staticmethod
+    def WavePortPEC(Attributes):
+        dict = {"Attributes": Attributes}
+        return dict,"WavePortPEC"
+
     @staticmethod
     def Impedance(Attributes,Rs=None,Ls=None,Cs=None):
 
@@ -223,7 +244,25 @@ class Boundaries:
             dict["CoordinateSystem"] = CoordinateSystem
         
         return dict,"SurfaceCurrent"
-        
+
+    @staticmethod
+    def Periodic_BoundaryPair(DonorAttributes, ReceiverAttributes, Translation=None, AffineTransformation=None):
+        pair_dict = {"DonorAttributes": DonorAttributes, "ReceiverAttributes": ReceiverAttributes}
+        if Translation != None:
+            pair_dict["Translation"] = Translation
+        if AffineTransformation != None:
+            pair_dict["AffineTransformation"] = AffineTransformation
+        return pair_dict
+
+    @staticmethod
+    def Periodic(FloquetWaveVector=None, BoundaryPairs=None):
+        periodic_dict = {}
+        if FloquetWaveVector != None:
+            periodic_dict["FloquetWaveVector"] = FloquetWaveVector
+        if BoundaryPairs != None:
+            periodic_dict["BoundaryPairs"] = list(BoundaryPairs)
+        return periodic_dict, "Periodic"
+
     @staticmethod
     def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
         dict = {"Index":Index,
@@ -249,6 +288,41 @@ class Boundaries:
 
         return dict,"SurfaceFlux"
 
+    @staticmethod
+    def Postprocessing_Impedance(Index,VoltageAttributes=None,CurrentAttributes=None,VoltagePath=None,CurrentPath=None,NSamples=None):
+        dict = {"Index":Index}
+        if VoltageAttributes != None:
+            dict["VoltageAttributes"] = VoltageAttributes
+        if CurrentAttributes != None:
+            dict["CurrentAttributes"] = CurrentAttributes
+        if VoltagePath != None:
+            dict["VoltagePath"] = VoltagePath
+        if CurrentPath != None:
+            dict["CurrentPath"] = CurrentPath
+        if NSamples != None:
+            dict["NSamples"] = NSamples
+        return dict,"Impedance"
+
+    @staticmethod
+    def Postprocessing_Voltage(Index,VoltageAttributes=None,VoltagePath=None,NSamples=None):
+        dict = {"Index":Index}
+        if VoltageAttributes != None:
+            dict["VoltageAttributes"] = VoltageAttributes
+        if VoltagePath != None:
+            dict["VoltagePath"] = VoltagePath
+        if NSamples != None:
+            dict["NSamples"] = NSamples
+        return dict,"Voltage"
+
+    @staticmethod
+    def Postprocessing_FarField(Attributes,NSample=None,ThetaPhis=None):
+        dict = {"Attributes":Attributes}
+        if NSample != None:
+            dict["NSample"] = NSample
+        if ThetaPhis != None:
+            dict["ThetaPhis"] = ThetaPhis
+        return dict,"FarField"
+
 class Solver:
 
     """
@@ -256,7 +330,7 @@ class Solver:
     for use with :meth:`pypalace.config.Config.add_Solver`.
 
     These functions mirror AWS Palace solver configurations for electrostatic,
-    magnetostatic, eigenmode, driven, and linear simulations.
+    magnetostatic, eigenmode, driven, transient, boundary mode, and linear simulations.
 
     See the `AWS Palace Solver documentation <https://awslabs.github.io/palace/stable/config/solver/>`_
     for full details on solver options.
@@ -288,6 +362,28 @@ class Solver:
             eigenmode_dict[eigenmode_labels[i]] = eigenmode_list[i]
 
         return eigenmode_dict,"Eigenmode"
+
+    @staticmethod
+    def BoundaryMode(Freq=None,N=1,Save=0,Target=0.0,Tol=None,MaxSize=None,Type="Default",Attributes=None):
+
+        boundarymode_dict = {"N":N,
+                              "Save":Save,
+                              "Type":Type}
+
+        boundarymode_list = np.array([Freq,Target,Tol,MaxSize])
+        boundarymode_labels = np.array(["Freq","Target","Tol","MaxSize"])
+        boundarymode_mask = boundarymode_list[:,] == None
+
+        boundarymode_list = boundarymode_list[~boundarymode_mask]
+        boundarymode_labels = boundarymode_labels[~boundarymode_mask]
+
+        for i in range(len(boundarymode_list)):
+            boundarymode_dict[boundarymode_labels[i]] = boundarymode_list[i]
+
+        if Attributes != None:
+            boundarymode_dict["Attributes"] = Attributes
+
+        return boundarymode_dict,"BoundaryMode"
         
     @staticmethod
     def Driven(MinFreq=None,MaxFreq=None,FreqStep=None,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
@@ -312,12 +408,12 @@ class Solver:
         return driven_dict,"Driven"
         
     @staticmethod
-    def Driven_Samples(Type=None,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddtoPROM=None):
+    def Driven_Samples(Type=None,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddToPROM=None):
         
         samples_dict = {}
         
-        samples_list = np.array([Type,MinFreq,MaxFreq,FreqStep,NSample,Freq,SaveStep,AddtoPROM])
-        samples_labels = np.array(["Type","MinFreq","MaxFreq","FreqStep","NSample","Freq","SaveStep","AddtoPROM"])
+        samples_list = np.array([Type,MinFreq,MaxFreq,FreqStep,NSample,Freq,SaveStep,AddToPROM])
+        samples_labels = np.array(["Type","MinFreq","MaxFreq","FreqStep","NSample","Freq","SaveStep","AddToPROM"])
         samples_mask = samples_list[:,] == None
         
         samples_list = samples_list[~samples_mask]
