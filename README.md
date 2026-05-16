@@ -11,13 +11,6 @@ For questions, comments, or collaboration, contact:
 [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu)
 
 ---
-## Workflow 
-
-<p align="center">
-  <img src="docs/images/pyPalace_workflow.png" width="650">
-</p>
-
----
 ## Installation
 
 > **Note:** pyPalace requires AWS Palace to be installed separately.
@@ -37,6 +30,13 @@ git clone https://github.com/FirasAbouzahr/pyPalace.git
 cd pyPalace
 pip install -e .
 ```
+
+---
+## Workflow 
+
+<p align="center">
+  <img src="docs/images/pyPalace_workflow.png" width="650">
+</p>
 
 ---
 
