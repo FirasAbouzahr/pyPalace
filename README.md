@@ -32,13 +32,6 @@ pip install -e .
 ```
 
 ---
-## Workflow 
-
-<p align="center">
-  <img src="docs/images/pyPalace_workflow.png" width="650">
-</p>
-
----
 
 ## Examples
 
