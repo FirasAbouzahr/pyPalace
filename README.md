@@ -14,7 +14,7 @@ For questions, comments, or collaboration, contact:
 ## Workflow 
 
 <p align="center">
-  <img src="docs/images/pyPalace_workflow.png" width="350">
+  <img src="docs/images/pyPalace_workflow.png" width="650">
 </p>
 
 ---
