@@ -11,7 +11,13 @@ For questions, comments, or collaboration, contact:
 [firasabouzahr2030@u.northwestern.edu](mailto:firasabouzahr2030@u.northwestern.edu)
 
 ---
+## Workflow 
 
+<p align="center">
+  <img src="docs/images/pypalace_workflow.png" width="850">
+</p>
+
+---
 ## Installation
 
 > **Note:** pyPalace requires AWS Palace to be installed separately.
@@ -46,6 +52,17 @@ Examples can be found in the
 (electrostatic simulations & LOM analysis of Transmon qubits)
 * [Example 03](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_03_fdomain_driven_resonator)
 (driven simulation of a resonator & DCM fitting to S21)
+
+---
+
+## Developer Notes
+
+Development wishlist: 
+* Add built-in meshing capability to pyPalace (e.g., with Gmsh or other open-source mesh generation tools).
+* Expanded testing and validation of less commonly used Palace features and boundary conditions.
+* Expanded quantum analysis utilities.
+* Additional advanced simulation and workflow examples for more complex device geometries and solver configurations.
+* Improvements to usability, documentation clarity, workflow accessibility, and overall user experience.
 
 ---
 
