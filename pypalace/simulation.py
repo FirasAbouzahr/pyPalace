@@ -185,8 +185,22 @@ class Simulation:
                 ID = terminal["Attributes"][0]
                 names.append(mesh_attributes[mesh_attributes.ID==str(ID)].Name.iloc[0])
             
+            ## no i-to-ground elements in this matrix yet, we add it below ##
             cap_matrix.index = names
             cap_matrix.columns = names
+            
+            ## get ground elements ##
+            ground_elements = []
+            for index in range(len(cap_matrix)):
+                row = cap_matrix.iloc[index]
+                Cig = -row.sum()
+                ground_elements.append(Cig)
+
+            ground_row = ground_elements + [0]
+            
+            ## add ground elements to matrix ##
+            cap_matrix["ground"] = ground_elements
+            cap_matrix.loc["ground"] = ground_row
             
             return cap_matrix
     
@@ -413,6 +427,9 @@ class Simulation:
         - Eigenmode fields are complex; "magnitude" is phase-independent,
           while individual components depend on the chosen phase convention.
         """
+        
+        if index < 1:
+            raise ValueError('Index must be ≥1. For example, the first mode of an eigenmode simulation is found with Index = 1, or the first time step (t=0) of a transient simulation is Index = 1')
         
         index = index - 1
         

@@ -143,7 +143,7 @@ class LOM:
     """
     
     @staticmethod
-    def get_Hamiltonian_parameters(C_Sigma,LJ):
+    def get_qubit_Hamiltonian_parameters(C_Sigma,LJ):
     
         """
         Compute transmon Hamiltonian parameters from circuit values.
