@@ -1,6 +1,6 @@
 # pyPalace 
 
-[![Docs](https://img.shields.io/badge/docs-live-blue)](https://firasabouzahr.github.io/pyPalace/)
+[![Documentation Status](https://readthedocs.org/projects/pypalace/badge/?version=latest)](https://pypalace.readthedocs.io/en/latest/)
 [![PyPI version](https://img.shields.io/pypi/v/pypalace.svg)](https://pypi.org/project/pypalace/)
 
 pyPalace is an open-source Python toolkit built around [AWS Palace](https://awslabs.github.io/palace/stable/) for the simulation and analysis of superconducting quantum devices. It enables users to build Palace configuration files, run simulations locally or on HPC systems, visualize computed electromagnetic fields, and extract simulation results through streamlined Python workflows.
@@ -59,5 +59,14 @@ Development wishlist:
 
 ---
 
+## Contributors
+
+| Name | Institution | Contribution |
+| :---     | :---     | :---     |
+| Sara Sussman  | Fermilab  | Physics expert |
+
+---
+
 ## License
 This project is licensed under the MIT License – see the [LICENSE](https://github.com/FirasAbouzahr/pyPalace/blob/main/LICENSE) file for details.
+
