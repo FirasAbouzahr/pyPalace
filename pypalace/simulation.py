@@ -122,9 +122,18 @@ class Simulation:
             self.config.save_config()
     
         if HPC_options == None:
-            command = subprocess.run(["mpirun", "-n",str(n),self.path_to_palace,self.path_to_json],capture_output=True,text=True)
-            print(command.stdout.strip())
-            print(command.stderr.strip())
+
+            command = subprocess.Popen(
+                ["mpirun", "-n", str(n), self.path_to_palace, self.path_to_json],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1)
+
+            for line in command.stdout:
+                print(line, end="")
+
+            command.wait()
 
         else:
                 if custom_script_name == None:
