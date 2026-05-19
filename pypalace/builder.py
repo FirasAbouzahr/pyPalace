@@ -110,12 +110,6 @@ class Boundaries:
     ``config["Boundaries"]["Postprocessing"]`` keys may exist there before they appear on
     the stable site; for example ``Impedance`` and ``Voltage`` mode postprocessing are
     described in `Palace main branch boundaries.md <https://github.com/awslabs/palace/blob/main/docs/src/config/boundaries.md>`_.
-
-    Note that ``Boundaries.Impedance`` builds the **surface impedance boundary condition**
-    (top-level ``"Impedance"`` array under ``Boundaries``), while
-    ``Boundaries.Postprocessing_Impedance`` builds an entry for **postprocessing** mode
-    impedance (nested under ``"Postprocessing"``); the JSON key name is the same, but the
-    object shape and meaning differ.
     """
 
     @staticmethod

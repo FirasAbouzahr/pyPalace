@@ -39,3 +39,7 @@ docs/.DS_Store
 docs/source/.DS_Store
 Examples/example_03_fdomain_driven_resonator/.ipynb_checkpoints/example03_analysis_notebook-checkpoint.ipynb
 Examples/example_03_fdomain_driven_resonator/.DS_Store
+.DS_Store
+Examples/example_00_Quantum_Metal_to_pyPalace/.ipynb_checkpoints/example00_notebook-checkpoint.ipynb
+Examples/example_01_eigenmode_EPR/.ipynb_checkpoints/example01_analysis_notebook-checkpoint.ipynb
+Examples/example_01_eigenmode_EPR/.ipynb_checkpoints/example01_notebook-checkpoint.ipynb

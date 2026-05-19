@@ -7,6 +7,7 @@ and saving Palace JSON configuration files.
 
 import json
 import numpy as np
+import os
 
 class Config:
 
@@ -261,6 +262,11 @@ class Config:
         """
     
         self.saved = True
+        
+        # create parent directories if needed
+        directory = os.path.dirname(self.config_name)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         
         if check_validity == True:
             validity_counter = []

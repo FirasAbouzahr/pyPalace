@@ -3,7 +3,7 @@
 [![Documentation Status](https://readthedocs.org/projects/pypalace/badge/?version=latest)](https://pypalace.readthedocs.io/en/latest/)
 [![PyPI version](https://img.shields.io/pypi/v/pypalace.svg)](https://pypi.org/project/pypalace/)
 
-pyPalace is an open-source Python toolkit built around [AWS Palace](https://awslabs.github.io/palace/stable/) for the simulation and analysis of superconducting quantum devices. It enables users to build Palace configuration files, run simulations locally or on HPC systems, visualize computed electromagnetic fields, and extract simulation results through streamlined Python workflows.
+pyPalace is an open-source Python toolkit built around [AWS Palace](https://awslabs.github.io/palace/stable/) for the simulation and analysis of superconducting quantum devices. It enables users to build Palace configuration files, run simulations locally or on HPC systems, visualize computed electromagnetic fields, and extract simulation results through streamlined Python workflows. 
 
 For superconducting devices, pyPalace includes quantum analysis tools based on methods such as Lumped Oscillator Modeling (LOM) and Energy Participation Ratio (EPR), along with related techniques for extracting important physical parameters of superconducting circuits and qubits.
 
@@ -38,7 +38,8 @@ pip install -e .
 Examples can be found in the
 [Examples directory](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples).
 
-* Example 00 (Introduction to pyPalace - **coming soon**)
+* [Example 00](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_00_Quantum_Metal_to_pyPalace)
+(simulating a Quantum Metal design with pyPalace)
 * [Example 01](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_01_eigenmode_EPR)
 (eigenmode simulations & EPR analysis of a qubit-cavity system)
 * [Example 02](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_02_electrostatics_LOM)
@@ -51,7 +52,7 @@ Examples can be found in the
 ## Developer Notes
 
 Development wishlist: 
-* Add built-in meshing capability to pyPalace (e.g., with Gmsh or other open-source mesh generation tools).
+* ~~Add built-in meshing capability to pyPalace (e.g., with Gmsh or other open-source mesh generation tools).~~
 * Expanded testing and validation of less commonly used Palace features and boundary conditions.
 * Expanded quantum analysis utilities.
 * Additional advanced simulation and workflow examples for more complex device geometries and solver configurations.
@@ -63,7 +64,7 @@ Development wishlist:
 
 | Name | Institution | Contribution |
 | :---     | :---     | :---     |
-| Sara Sussman  | Fermilab  | Physics expert |
+| Sara Sussman  | Fermilab  | Superconducting qubit expertise |
 
 ---
 

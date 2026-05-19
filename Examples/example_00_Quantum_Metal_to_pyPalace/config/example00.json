@@ -1,0 +1,68 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "example00_output"
+  },
+  "Model": {
+    "Mesh": "mesh/example00.msh",
+    "L0": 1e-06
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          4
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 11.45,
+        "LossTan": 1e-07
+      },
+      {
+        "Attributes": [
+          5
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        1,
+        2,
+        6,
+        7
+      ]
+    },
+    "LumpedPort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          3
+        ],
+        "Direction": "+Y",
+        "L": 1.4e-08
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 1,
+      "Save": 1,
+      "Type": "Default",
+      "Target": 1.0,
+      "Tol": 0.0001
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "Default",
+      "Tol": 0.0001,
+      "MaxIts": 25
+    }
+  }
+}

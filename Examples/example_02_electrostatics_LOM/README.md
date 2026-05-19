@@ -5,10 +5,11 @@ Example 02 is split into two python notebooks, one for each qubit type. Each not
 * Run the corresponding simulations
 * Perform LOM analysis to extract the qubit Hamiltonian parameters
 
-The pocket transmon and cross designs (generated with [Quantum Metal](https://qiskit-community.github.io/qiskit-metal/)) are shown below. 
+
+
+The pocket transmon and cross designs (generated with [Quantum Metal](https://qiskit-community.github.io/qiskit-metal/)) are shown below. In these examples, we do not explicitly use pyPalace to mesh these two Quantum Metal designs but to see how to do so see example00.
 
 <p align="center">
   <img src="Figures/qiskit-metal_qubit_images.png" width="600">
 </p>
 
-The designs were meshed using [Cubit](https://cubit.sandia.gov/). 
