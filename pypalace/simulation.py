@@ -14,7 +14,7 @@ import pyvista as pv
 import numpy as np
 import json
 from .config import Config
-from .tools import Tools
+from .mesh import mesh
 
 class Simulation:
 
@@ -185,7 +185,7 @@ class Simulation:
             cap_matrix = cap_matrix.drop(columns=['        i'])
             
             meshfile = self.config.config["Model"]["Mesh"]
-            mesh_attributes = Tools.get_mesh_attributes(meshfile)
+            mesh_attributes = mesh.get_mesh_attributes(meshfile)
             
             setup = self.config.config["Boundaries"]["Terminal"]
             names = []
