@@ -1,6 +1,6 @@
 # pyPalace 
 
-[![Documentation Status](https://readthedocs.org/projects/pypalace/badge/?version=latest)](https://pypalace.readthedocs.io/en/latest/)
+[![Documentation](https://img.shields.io/badge/Documentation-latest-blue)](https://pypalace.readthedocs.io/en/latest/)
 [![PyPI version](https://img.shields.io/pypi/v/pypalace.svg)](https://pypi.org/project/pypalace/)
 
 pyPalace is an open-source Python toolkit built around [AWS Palace](https://awslabs.github.io/palace/stable/) for the simulation and analysis of superconducting quantum devices. It enables users to build Palace configuration files, run simulations locally or on HPC systems, visualize computed electromagnetic fields, and extract simulation results through streamlined Python workflows. 
