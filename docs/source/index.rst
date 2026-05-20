@@ -28,7 +28,7 @@ Overview
 pyPalace wraps common Palace setup tasks in Python:
 
 * **Configuration** — :mod:`pypalace.builder` helpers and :class:`~pypalace.config.Config` to assemble and save JSON input files.
-* **Meshing** — :class:`~pypalace.mesh.mesh` for Gmsh export from coplanar Qiskit Metal layouts and for reading mesh attribute tables.
+* **Meshing** — :class:`~pypalace.Mesh` (or ``from pypalace import mesh``) for Gmsh export from coplanar Qiskit Metal layouts and for reading mesh attribute tables.
 * **Simulation** — :class:`~pypalace.simulation.Simulation` to launch Palace locally or via Slurm.
 * **Analysis** — utilities in the examples and :mod:`pypalace.analysis` for extracting Hamiltonian parameters from EM results.
 

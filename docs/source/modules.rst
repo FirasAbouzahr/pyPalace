@@ -38,10 +38,10 @@ pypalace.simulation module
    :show-inheritance:
    :undoc-members:
 
-pypalace.mesh module
---------------------
+pypalace.meshing module
+-----------------------
 
-.. automodule:: pypalace.mesh
+.. automodule:: pypalace.meshing
    :members:
    :show-inheritance:
    :undoc-members:

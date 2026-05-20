@@ -77,7 +77,7 @@ produces a Palace-compatible file—Cubit, Gmsh, COMSOL export, and others—the
 
 pyPalace does not require a single mesh source. Example 00 shows one optional path:
 meshing a coplanar layout from `Quantum Metal <https://qiskit-community.github.io/qiskit-metal/>`_
-(formerly Qiskit Metal) with :meth:`~pypalace.mesh.mesh.mesh_Quantum_Metal_design`. That path
+(formerly Qiskit Metal) with :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design`. That path
 needs extra packages:
 
 .. code-block:: bash
@@ -85,7 +85,9 @@ needs extra packages:
    pip install gmsh shapely qiskit-metal
 
 Other tutorials ship pre-built ``.bdf`` or ``.msh`` meshes. To list physical groups when
-writing configs, use :meth:`~pypalace.mesh.mesh.get_mesh_attributes`.
+writing configs, use :meth:`~pypalace.Mesh.get_mesh_attributes`::
+
+   from pypalace import mesh  # same as Mesh — see Example 00
 
 
 High-performance computing

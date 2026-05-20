@@ -17,11 +17,8 @@ from shapely.affinity import scale as shapely_scale
 from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.ops import unary_union
 
-class mesh:
-
-    """
-
-    """
+class Mesh:
+    """Mesh I/O and Gmsh export helpers for Palace workflows."""
     
     @staticmethod
     def get_mesh_attributes(filename: str | Path):
@@ -232,7 +229,7 @@ class mesh:
         )
 
         geom_tol = max(1e-12, geom_tol_factor * surface_mesh_size)
-        design_unit_to_meters = mesh._qmetal_design_unit_to_meters(design)
+        design_unit_to_meters = Mesh._qmetal_design_unit_to_meters(design)
         l0_meters = design_unit_to_meters / mesh_scale
 
         auto_attrs = sorted(set(Attributes.values())) if Attributes else [0]
@@ -531,6 +528,6 @@ class mesh:
             if owns_gmsh and gmsh.isInitialized():
                 gmsh.finalize()
                 
-        mesh_attributes = mesh.get_mesh_attributes(output_mesh)
+        mesh_attributes = Mesh.get_mesh_attributes(output_mesh)
         mesh_attributes = mesh_attributes.sort_values("ID")
         return mesh_attributes

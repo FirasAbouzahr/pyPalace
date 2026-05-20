@@ -183,10 +183,10 @@ class Simulation:
             cap_matrix = pd.read_csv(cap_matrix_results)
             cap_matrix = cap_matrix.drop(columns=['        i'])
             
-            from .mesh import mesh
+            from .meshing import Mesh
 
             meshfile = self.config.config["Model"]["Mesh"]
-            mesh_attributes = mesh.get_mesh_attributes(meshfile)
+            mesh_attributes = Mesh.get_mesh_attributes(meshfile)
             
             setup = self.config.config["Boundaries"]["Terminal"]
             names = []

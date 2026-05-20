@@ -14,7 +14,7 @@ home page).
 Workflow at a glance
 --------------------
 
-#. **Design & mesh** — Lay out the device (for example in Qiskit Metal) and produce a Palace-ready mesh (``.msh`` or ``.bdf``). Example 00 uses :meth:`~pypalace.mesh.mesh.mesh_Quantum_Metal_design`; other tutorials ship pre-built meshes.
+#. **Design & mesh** — Lay out the device (for example in Qiskit Metal) and produce a Palace-ready mesh (``.msh`` or ``.bdf``). Example 00 uses :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design`; other tutorials ship pre-built meshes.
 #. **Configure** — Build ``config["Problem"]``, ``Model``, ``Domains``, ``Boundaries``, and ``Solver`` with :mod:`pypalace.builder`, assemble them in a :class:`~pypalace.config.Config`, and save JSON.
 #. **Simulate** — Point :class:`~pypalace.simulation.Simulation` at your Palace binary and call :meth:`~pypalace.simulation.Simulation.run` (local MPI or Slurm).
 #. **Analyze** — Read CSV / field outputs; apply LOM, EPR, or custom postprocessing (see the example notebooks).
@@ -36,7 +36,7 @@ Import the builder namespaces and create a config object:
    # ... add_Domains, add_Boundaries, add_Solver ...
    cfg.save_config()
 
-Use :meth:`~pypalace.mesh.mesh.get_mesh_attributes` to map mesh physical groups to materials and boundary conditions.
+Use :meth:`~pypalace.Mesh.get_mesh_attributes` to map mesh physical groups to materials and boundary conditions.
 
 Palace field semantics are documented in the
 `stable Palace configuration reference <https://awslabs.github.io/palace/stable/config/config/>`_.
@@ -60,7 +60,7 @@ For clusters, pass ``HPC_options`` from :meth:`~pypalace.simulation.Simulation.H
 Mesh generation (Quantum Metal)
 -------------------------------
 
-For coplanar designs in Qiskit Metal, :meth:`~pypalace.mesh.mesh.mesh_Quantum_Metal_design` writes a tagged Gmsh mesh and returns attribute metadata. Extra packages are required — see :ref:`install`.
+For coplanar designs in Qiskit Metal, :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design` writes a tagged Gmsh mesh and returns attribute metadata. Extra packages are required — see :ref:`install`.
 
 
 Analysis workflows (qubit-focused examples)
