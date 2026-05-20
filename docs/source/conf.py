@@ -13,7 +13,9 @@ sys.path.insert(0, os.path.abspath('../..'))
 project = 'pyPalace'
 copyright = '2026, Firas Abouzahr'
 author = 'Firas Abouzahr'
-release = '0.1.0'
+release = '0.1.1'
+
+html_title = "pyPalace documentation"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
