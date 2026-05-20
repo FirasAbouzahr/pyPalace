@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-import gmsh
 from shapely.affinity import scale as shapely_scale
 from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.ops import unary_union
@@ -210,6 +209,7 @@ class mesh:
         verbose:
             Print a summary after writing the mesh.
         """
+        import gmsh
 
         Attributes = dict(Attributes or {})
         output_path = Path(output_mesh)

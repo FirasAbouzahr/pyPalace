@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 project = 'pyPalace'
 copyright = '2026, Firas Abouzahr'
 author = 'Firas Abouzahr'
-release = '0.1.1'
+release = '0.1.2'
 
 html_title = "pyPalace documentation"
 
@@ -27,6 +27,12 @@ extensions = [
 
 templates_path = ['_templates']
 exclude_patterns = []
+
+autodoc_default_options = {
+    "members": True,
+    "show-inheritance": True,
+    "undoc-members": True,
+}
 
 
 
