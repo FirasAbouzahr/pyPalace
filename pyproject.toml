@@ -1,6 +1,6 @@
 [project]
 name = "pypalace"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Python toolkit for superconducting circuit design and simulation workflows using AWS Palace."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -16,7 +16,9 @@ dependencies = [
     "scqubits>=4.0,<5.0",
     "matplotlib>=3.5",
     "pyvista>=0.40",
-    "scipy>=1.7"
+    "scipy>=1.7",
+    "gmsh>=4.11",
+    "shapely>=2.0"
 ]
 
 [project.optional-dependencies]
