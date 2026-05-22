@@ -123,17 +123,22 @@ class Boundaries:
         return dict,"PMC"
         
     @staticmethod
-    def Absorbing(Attributes,Order):
-        dict = {"Attributes":Attributes,
-                "Order":Order}
+    def Absorbing(Attributes,Order=None):
+        dict = {"Attributes":Attributes}
+        
+        if Order != None:
+            dict["Order"] = Order
+            
         return dict,"Absorbing"
         
     @staticmethod
-    def Conductivity(Attributes,Conductivity,Permeability,Thickness=None):
+    def Conductivity(Attributes,Conductivity,Permeability=None,Thickness=None):
     
         dict = {"Attributes":Attributes,
-                "Conductivity":Conductivity,
-                "Permeability":Permeability}
+                "Conductivity":Conductivity}
+        
+        if Permeability != None:
+            dict["Permeability"] = Permeability
         
         if Thickness != None:
             dict["Thickness"] = Thickness
@@ -156,19 +161,20 @@ class Boundaries:
         return dict,"Terminal"
         
     @staticmethod
-    def LumpedPort(Index,Attributes,Direction=None,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
+    def LumpedPort(Index,Attributes,Direction,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
     
         dict = {"Index":Index,
-                "Attributes":Attributes}
+                "Attributes":Attributes,
+                "Direction":Direction}
                 
         if (R != None or L != None or C != None) and (Rs != None or Ls != None or Cs != None):
             raise ValueError("Cannot combine both circuit (R,L,C) and surface (Rs,Ls,Cs) parameters")
             
         if Direction != None and Elements != None:
-            raise ValueError("Cannot use both Direction and Elements")
+            raise ValueError("Cannot use both Direction and Elements, set Direction=None to use Elements.")
 
-        LP_list = np.array([Direction,CoordinateSystem,Excitation,Active,R,L,C,Rs,Ls,Cs,Elements])
-        LP_labels = np.array(["Direction","CoordinateSystem","Excitation","Active","R","L","C","Rs","Ls","Cs","Elements"])
+        LP_list = np.array([CoordinateSystem,Excitation,Active,R,L,C,Rs,Ls,Cs,Elements])
+        LP_labels = np.array(["CoordinateSystem","Excitation","Active","R","L","C","Rs","Ls","Cs","Elements"])
         LP_mask = LP_list[:,] == None
 
         LP_list = LP_list[~LP_mask]
@@ -239,32 +245,42 @@ class Boundaries:
         
         return dict,"SurfaceCurrent"
 
-    @staticmethod
-    def Periodic_BoundaryPair(DonorAttributes, ReceiverAttributes, Translation=None, AffineTransformation=None):
-        pair_dict = {"DonorAttributes": DonorAttributes, "ReceiverAttributes": ReceiverAttributes}
-        if Translation != None:
-            pair_dict["Translation"] = Translation
-        if AffineTransformation != None:
-            pair_dict["AffineTransformation"] = AffineTransformation
-        return pair_dict
+## coming up in a later release? ##
+#    @staticmethod
+#    def Periodic_BoundaryPair(DonorAttributes, ReceiverAttributes, Translation=None, AffineTransformation=None):
+#        pair_dict = {"DonorAttributes": DonorAttributes, "ReceiverAttributes": ReceiverAttributes}
+#        if Translation != None:
+#            pair_dict["Translation"] = Translation
+#        if AffineTransformation != None:
+#            pair_dict["AffineTransformation"] = AffineTransformation
+#        return pair_dict
 
     @staticmethod
-    def Periodic(FloquetWaveVector=None, BoundaryPairs=None):
-        periodic_dict = {}
+    def Periodic(DonorAttributes, ReceiverAttributes, Translation=None,AffineTransformation=None,FloquetWaveVector=None):
+        periodic_dict = {"DonorAttributes":DonorAttributes,"ReceiverAttributes":ReceiverAttributes}
+        if Translation != None:
+            periodic_dict["Translation"] = Translation
+        if AffineTransformation != None:
+            periodic_dict["AffineTransformation"] = AffineTransformation
         if FloquetWaveVector != None:
             periodic_dict["FloquetWaveVector"] = FloquetWaveVector
-        if BoundaryPairs != None:
-            periodic_dict["BoundaryPairs"] = list(BoundaryPairs)
         return periodic_dict, "Periodic"
 
     @staticmethod
-    def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan):
+    def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan=None):
         dict = {"Index":Index,
                 "Attributes":Attributes,
                 "Type":Type,
                 "Thickness":Thickness,
-                "Permittivity":Permittivity,
-                "LossTan":LossTan}
+                "Permittivity":Permittivity}
+            
+        valid_types = ["Default","MA","SA","MS"]
+        
+        if Type not in valid_types:
+            raise ValueError('Invalid Type specified, allowed entries are "Default","MA","SA","MS". \nSee the Palace documentation: https://awslabs.github.io/palace/stable/config/boundaries/#boundaries[%22Postprocessing%22][%22Dielectric%22]')
+        
+        if LossTan != None:
+            dict["LossTan"] = LossTan
 
         return dict,"Dielectric"
         
@@ -380,17 +396,17 @@ class Solver:
         return boundarymode_dict,"BoundaryMode"
         
     @staticmethod
-    def Driven(MinFreq=None,MaxFreq=None,FreqStep=None,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
+    def Driven(MinFreq,MaxFreq,FreqStep,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
         
-        driven_dict = {}
+        driven_dict = {"MinFreq":MinFreq,"MaxFreq":MaxFreq,"FreqStep":FreqStep}
         
         if AdaptiveTol == None and (Restart != None or AdaptiveMaxSamples != None or AdaptiveConvergenceMemory != None):
             print("AdaptiveTol not set, ignoring adaptive frequency sweep")
             AdaptiveTol,Restart,AdaptiveMaxSamples,AdaptiveConvergenceMemory = None,None,None,None
         
     
-        driven_list = np.array([MinFreq,MaxFreq,FreqStep,SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory])
-        driven_labels = np.array(["MinFreq","MaxFreq","FreqStep","SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory"])
+        driven_list = np.array([SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory])
+        driven_labels = np.array(["SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory"])
         driven_mask = driven_list[:,] == None
         
         driven_list = driven_list[~driven_mask]
@@ -402,12 +418,12 @@ class Solver:
         return driven_dict,"Driven"
         
     @staticmethod
-    def Driven_Samples(Type=None,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddToPROM=None):
+    def Driven_Samples(Type,MinFreq=None,MaxFreq=None,FreqStep=None,NSample=None,Freq=None,SaveStep=None,AddToPROM=None):
         
-        samples_dict = {}
+        samples_dict = {"Type":Type}
         
-        samples_list = np.array([Type,MinFreq,MaxFreq,FreqStep,NSample,Freq,SaveStep,AddToPROM])
-        samples_labels = np.array(["Type","MinFreq","MaxFreq","FreqStep","NSample","Freq","SaveStep","AddToPROM"])
+        samples_list = np.array([MinFreq,MaxFreq,FreqStep,NSample,Freq,SaveStep,AddToPROM])
+        samples_labels = np.array(["MinFreq","MaxFreq","FreqStep","NSample","Freq","SaveStep","AddToPROM"])
         samples_mask = samples_list[:,] == None
         
         samples_list = samples_list[~samples_mask]

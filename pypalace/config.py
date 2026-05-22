@@ -76,6 +76,12 @@ class Config:
         self.Type = Type.lower().capitalize()
         if self.Type == "Boundarymode":
             self.Type = "BoundaryMode"
+            
+        valid_types = ["Eigenmode","Driven","Transient","Electrostatic","Magnetostatic"]
+        
+        if self.Type not in valid_types:
+            raise ValueError('Invalid Type specified, valid options are "Eigenmode","Driven","Transient","Electrostatic","Magnetostatic"')
+            
 
         self.config["Problem"] = {"Type":Type,
                                "Verbose":Verbose,
