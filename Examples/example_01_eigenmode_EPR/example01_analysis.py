@@ -1,4 +1,4 @@
-from pypalace import Config,Simulation,Tools
+from pypalace import Config,Simulation
 import numpy as np
 from pypalace.analysis import EPR
 
@@ -20,7 +20,7 @@ my_config = Config.load_config(config_dir + "example01.json")
 cavity_qubit_sim = Simulation(my_config,None) # define simulation object
 
 ''' EPR analysis '''
-LJ = Tools.get_LJ_from_config(my_config,JJ_port_index) # need it for EPR
+LJ = 14e-09 # taken directly from definition in LumpedPort BC in the configuration file
 
 # qubit parameters
 f_q = cavity_qubit_sim.get_frequency_eigenmode(qubit_mode) # qubit frequency
