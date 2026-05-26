@@ -1,4 +1,4 @@
-from pypalace import Config,Simulation,Tools
+from pypalace import Config,Simulation
 import numpy as np
 from pypalace.analysis import EPR
 
