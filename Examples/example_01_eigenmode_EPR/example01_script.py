@@ -1,4 +1,4 @@
-from pypalace import Config, Simulation,Tools
+from pypalace import Config, Simulation
 from pypalace.builder import Model, Domains, Boundaries, Solver
 
 ''' paths '''
