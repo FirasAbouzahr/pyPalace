@@ -226,7 +226,7 @@ class Simulation:
         Returns
         -------
         float
-            Eigenfrequency in GHz.
+            Eigenfrequency in Hz.
 
         Raises
         ------
@@ -242,14 +242,13 @@ class Simulation:
             freq_results = self.config.config["Problem"]["Output"]+"/eig.csv"
             freqs = pd.read_csv(freq_results,usecols = [0,1,2,3])
             freqs.columns = ["m","frequency_GHz","frequency_Im","Q"]
-            f_i = freqs[freqs.m == mode].frequency_GHz.iloc[0]
+            f_i = freqs[freqs.m == mode].frequency_GHz.iloc[0]*1e9
             
             return f_i
             
-            
     def get_kappa_eigenmode(self,mode:int):
         """
-        Compute the linewidth (kappa) of a specified eigenmode.
+        Compute the linewidth (kappa) of a specified eigenmode from its complex frequency.
 
         Parameters
         ----------
@@ -259,7 +258,7 @@ class Simulation:
         Returns
         -------
         float
-            Linewidth (kappa) in GHz.
+            Linewidth (kappa) in Hz.
 
         Raises
         ------
@@ -275,12 +274,11 @@ class Simulation:
             freq_results = self.config.config["Problem"]["Output"]+"/eig.csv"
             freqs = pd.read_csv(freq_results,usecols = [0,1,2,3])
             freqs.columns = ["m","frequency_GHz","frequency_Im","Q"]
-            f_i = freqs[freqs.m == mode].frequency_GHz.iloc[0]
-            Q_i = freqs[freqs.m == mode].Q.iloc[0]
+            f_complex = freqs[freqs.m == mode].frequency_Im.iloc[0]*1e9
             
-            kappa_i_int = f_i/Q_i
+            kappa = 2*f_complex
             
-            return kappa_i_int
+            return kappa
                 
     def get_portEPR(self,port_index:int,mode:int):
         """

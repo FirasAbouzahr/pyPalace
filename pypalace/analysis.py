@@ -33,7 +33,7 @@ class EPR:
         p_q : float
             Qubit energy participation ratio (unitless).
         f_q : float
-            Qubit frequency in GHz.
+            Qubit frequency in Hz.
         LJ : float
             Josephson inductance in Henries.
 
@@ -49,7 +49,7 @@ class EPR:
 
         EJ = phi0**2/((2*pi)**2*LJ)
 
-        w_q = 2 * np.pi * f_q * 10**9
+        w_q = 2 * np.pi * f_q
         alpha_q = p_q**2 * (hbar * w_q**2)/(8 * EJ) # calculate alpha
         alpha_q = (alpha_q / (2*pi))
         
@@ -68,9 +68,9 @@ class EPR:
         p_r : float
             Resonator participation ratio (unitless).
         f_q : float
-            Qubit frequency in GHz.
+            Qubit frequency in Hz.
         f_r : float
-            Resonator frequency in GHz.
+            Resonator frequency in Hz.
         LJ : float
             Josephson inductance in Henries.
 
@@ -86,8 +86,8 @@ class EPR:
         
         
         EJ = phi0**2/((2*pi)**2*LJ)
-        w_q = 2 * np.pi * f_q * 10**9
-        w_r = 2 * np.pi * f_r * 10**9
+        w_q = 2 * np.pi * f_q
+        w_r = 2 * np.pi * f_r
         
         chi = p_q * p_r * (hbar * w_q * w_r)/(4*EJ)
         
@@ -107,9 +107,9 @@ class EPR:
         Parameters
         ----------
         f_q : float
-            Qubit frequency in GHz.
+            Qubit frequency in Hz.
         f_r : float
-            Resonator frequency in GHz.
+            Resonator frequency in Hz.
         alpha_q : float
             Qubit anharmonicity (in Hz).
         chi : float
@@ -126,8 +126,8 @@ class EPR:
         """
         
         
-        delta = (f_r - f_q) * 10**9
-        sigma = (f_q + f_r) * 10**9
+        delta = (f_r - f_q)
+        sigma = (f_q + f_r)
         denom = alpha_q/(delta *(delta - alpha_q)) + alpha_q/(sigma*(sigma + alpha_q))
         g = np.sqrt(chi/denom/2)
         return g
@@ -179,6 +179,31 @@ class LOM:
         alpha = qubit.anharmonicity() # in MHz
         
         return {"frequency_GHz":f_q,"anharmonicity_MHz":alpha}
+        
+        def get_Cr(wr,m,Zc=50):
+            """
+            Compute resonator capacitance as an effective lumped capacitance.
+
+            Parameters
+            ----------
+            wr : float
+                Resonator Angular frequency [rad/s] = 2*pi*f_r.
+            m : float
+                m = 2 for quarter-wavelength resonators and m = 4 for half-wavelength resonators.
+            Zc : float
+                Waveguide’s characteristic impedance in Ohms, default is 50 Ohms.
+
+            Returns
+            -------
+            float
+                Resonator capacitance 
+
+            Notes
+            -----
+            Taken from Equation 8 of SQuADDS paper (https://quantum-journal.org/papers/q-2024-09-09-1465/)
+            """
+            
+            return np.pi / (m * wr * Zc)
         
 
 class resonator_analysis:
@@ -242,10 +267,3 @@ class resonator_analysis:
                 plt.show()
             
         return {"frequency_GHz":f0_fit/1e9,"kappa_kHz":kappa_fit/1e3}
-        
-        
-        
-#    def get_resonator_kappa_eigenmode():
-#
-#        
-        
