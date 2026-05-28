@@ -1,5 +1,5 @@
 """
-
+pyPalace utilities for mesh generation and mesh inspection
 """
 
 import pandas as pd
@@ -165,8 +165,7 @@ class Mesh:
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
-        geom_tol_factor: float = 0.01,
-        verbose: bool = True):
+        geom_tol_factor: float = 0.01):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
 
@@ -203,10 +202,71 @@ class Mesh:
         geom_tol_factor:
             Tolerance used for face-to-polygon classification, as a fraction of
             ``surface_mesh_size`` after scaling.
-        verbose:
-            Print a summary after writing the mesh.
         """
+        
         import gmsh
+        
+        
+        poly_df = design.qgeometry.tables["poly"].copy()
+        
+        def polygon_needs_dedupe(p):
+            """True if any consecutive exterior or hole vertices are identical."""
+            ext = list(p.exterior.coords)[:-1]
+            for i in range(len(ext)):
+                if ext[i] == ext[(i + 1) % len(ext)]:
+                    return True
+            for interior in p.interiors:
+                h = list(interior.coords)[:-1]
+                for i in range(len(h)):
+                    if h[i] == h[(i + 1) % len(h)]:
+                        return True
+            return False
+
+        damaged_goods = []
+        for _, row in poly_df.iterrows():
+            g = row["geometry"]
+            polys = [g] if g.geom_type == "Polygon" else list(g.geoms)
+            for p in polys:
+                if polygon_needs_dedupe(p):
+                    damaged_goods.append((row["component"], row["name"], row.get("subtract")))
+            
+        damaged_goods = np.array(damaged_goods)
+
+        num_to_repair = len(damaged_goods)
+
+        if num_to_repair > 0:
+            print(f"USER WARNING: {num_to_repair} geometry component(s) found with one or more consecutive duplicate vertices -- repairing now for meshing")
+
+        def dedupe_exterior(poly):
+            coords = list(poly.exterior.coords)
+            out = [coords[0]]
+            for c in coords[1:]:
+                if c != out[-1]:
+                    out.append(c)
+            if out[0] == out[-1]:
+                out[-1] = out[0]  # keep closed ring
+            holes = []
+            for interior in poly.interiors:
+                h = list(interior.coords)
+                hout = [h[0]]
+                for c in h[1:]:
+                    if c != hout[-1]:
+                        hout.append(c)
+                holes.append(hout)
+            return Polygon(out, holes)
+
+        for fixer_upper in damaged_goods:
+            comp,name,substract = fixer_upper[0],fixer_upper[1],fixer_upper[2]
+            idx = poly_df[(poly_df["name"] == name) & (poly_df["helper"] == False)].index[0]
+            g = poly_df.at[idx, "geometry"]
+            if g.geom_type == "Polygon":
+                poly_df.at[idx, "geometry"] = dedupe_exterior(g)
+            else:
+                poly_df.at[idx, "geometry"] = MultiPolygon([dedupe_exterior(p) for p in g.geoms])
+
+        if num_to_repair > 0:
+            print(f"{num_to_repair} geometry component(s) sucessfully repaired")
+
 
         Attributes = dict(Attributes or {})
         output_path = Path(output_mesh)
@@ -247,7 +307,6 @@ class Mesh:
         ground_plane_attr = int(ground_plane_attr)
         farfield_attr = int(farfield_attr)
 
-        poly_df = design.qgeometry.tables["poly"].copy()
         if "helper" in poly_df.columns:
             poly_df = poly_df[poly_df["helper"] == False]
 
