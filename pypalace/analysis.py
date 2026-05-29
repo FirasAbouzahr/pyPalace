@@ -139,7 +139,7 @@ class LOM:
     lumped oscillator model (LOM).
 
     These methods map capacitance and inductance values to effective
-    transmon parameters using scqubits.
+    transmon parameters using scqubits and analytic expressions.
     """
     
     @staticmethod
@@ -180,14 +180,15 @@ class LOM:
         
         return {"frequency_GHz":f_q,"anharmonicity_MHz":alpha}
         
-        def get_Cr(wr,m,Zc=50):
+        @staticmethod
+        def get_Cr(f_r,m,Zc=50):
             """
             Compute resonator capacitance as an effective lumped capacitance.
 
             Parameters
             ----------
-            wr : float
-                Resonator Angular frequency [rad/s] = 2*pi*f_r.
+            f_r : float
+                Resonator frequency [Hz]
             m : float
                 m = 2 for quarter-wavelength resonators and m = 4 for half-wavelength resonators.
             Zc : float
@@ -202,9 +203,8 @@ class LOM:
             -----
             Taken from Equation 8 of SQuADDS paper (https://quantum-journal.org/papers/q-2024-09-09-1465/)
             """
-            
+            wr = 2*np.pi * f_r
             return np.pi / (m * wr * Zc)
-        
 
 class resonator_analysis:
     
