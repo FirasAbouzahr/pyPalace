@@ -1,15 +1,8 @@
-### Example 02 (Electrostatic simulations & LOM analysis of pocket- & cross-style Transmon qubits)
+### Example 02 (Electrostatic simulations & LOM analysis of pocket- & Xmon-style Transmon qubits)
 
-Example 02 is split into two python notebooks, one for each qubit type. Each notebook has a step-by-step walkthrough to:
-* Generate complete config object/file.
-* Run the corresponding simulations
-* Perform LOM analysis to extract the qubit Hamiltonian parameters
-
-
-
-The pocket transmon and cross designs (generated with [Quantum Metal](https://qiskit-community.github.io/qiskit-metal/)) are shown below. In these examples, we do not explicitly use pyPalace to mesh these two Quantum Metal designs but to see how to do so see example00.
-
-<p align="center">
-  <img src="Figures/qiskit-metal_qubit_images.png" width="600">
-</p>
-
+Example 02 is split into three python notebooks.
+* [build_and_mesh_transmons.ipynb](build_and_mesh_transmons.ipynb) builds the transmon qubit layouts with Quantum Metal and meshes the geometries with pyPalace (Gmsh backend). For a more thorough look at meshing with pyPalace, see [Example 00](https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_00_Quantum_Metal_to_pyPalace).
+* [example02_notebook_pocketTransmon.ipynb](example02_notebook_pocketTransmon.ipynb) & [example02_notebook_TransmonCross.ipynb](example02_notebook_TransmonCross.ipynb) are step-by-step walkthroughs to:
+    - Generate config object/file for electrostatic simulations to extract Maxwell capacitance matrices.
+    - Run the corresponding simulations
+    - Perform LOM analysis to extract the qubit Hamiltonian parameters + resonator-qubit system Hamiltonian parameters.

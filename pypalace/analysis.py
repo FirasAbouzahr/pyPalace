@@ -238,7 +238,7 @@ class LOM:
             
             g = -(C_g / C_sigma) * np.sqrt(hbar * omega_r * e**2 / C_r) * (EJ / (8 * E_C)) ** 0.25 / hbar
 
-            return g/(2*pi)
+            return abs(g)/(2*pi)
 
         elif topology == "floating":
             C1 = -C[2, 0]  # coupler to pad1
