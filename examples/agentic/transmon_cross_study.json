@@ -1,0 +1,16 @@
+{
+  "targets": { "f_q_GHz": 4.5, "alpha_MHz": -250 },
+  "tolerances": { "f_q_GHz": 0.05, "alpha_MHz": 15 },
+  "weights": { "f_q_GHz": 1.0, "alpha_MHz": 1.0 },
+  "template": "transmon_cross_grounded",
+  "search": {
+    "cross_length_um": { "min": 200, "max": 400 },
+    "claw_length_um": { "min": 50, "max": 200 },
+    "ground_spacing_um": { "min": 5, "max": 30 },
+    "L_J_nH": { "min": 5, "max": 30 }
+  },
+  "optuna": { "n_trials": 50, "n_jobs": 1, "seed": 42 },
+  "mesh_surface_size_um": 0.5,
+  "mesh_scale": 1000.0,
+  "mpi_processes": 1
+}

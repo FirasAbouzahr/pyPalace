@@ -27,6 +27,14 @@ dev = [
     "black",
     "ruff"
 ]
+agentic = [
+    "optuna>=3.0",
+    "pydantic>=2.0",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+pypalace-agent = "pypalace_agent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/FirasAbouzahr/pyPalace"
@@ -40,4 +48,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pypalace*"]
+include = ["pypalace*", "pypalace_agent*"]
