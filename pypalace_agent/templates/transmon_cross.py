@@ -77,7 +77,6 @@ def mesh_design(
         Attributes=dict(MESH_ATTRIBUTES),
         surface_mesh_size=surface_mesh_size_um * 1e-3,  # um -> mm (Metal default)
         mesh_scale=mesh_scale,
-        verbose=False,
     )
 
 
