@@ -35,7 +35,7 @@ def build_transmon_cross_design(
                     connector_type="0",
                     claw_length=f"{claw_length_um}um",
                     ground_spacing=f"{ground_spacing_um}um",
-                    claw_gap="4um",
+                    claw_gap="6um",
                 )
             ),
         )
@@ -54,7 +54,7 @@ def build_transmon_cross_design(
                 connector_type="0",
                 claw_length=f"{claw_length_um}um",
                 ground_spacing=f"{ground_spacing_um}um",
-                claw_gap="4um",
+                claw_gap="6um",
             )
         ),
     )
