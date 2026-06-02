@@ -23,13 +23,29 @@ def build_transmon_cross_design(
     """
     Build a planar Qiskit Metal design with one TransmonCross component (no GUI).
 
-    Parameters are given in micrometers and map to common TransmonCross option keys.
+    Matches Example 02 Xmon layout. Only three geometry knobs are varied; the rest are fixed:
+
+    .. code-block:: python
+
+        dict(
+            cross_length=f"{cross_length_um}um",
+            connection_pads=dict(
+                claw=dict(
+                    connector_location="90",
+                    connector_type="0",
+                    claw_length=f"{claw_length_um}um",
+                    ground_spacing=f"{ground_spacing_um}um",
+                    claw_gap="4um",
+                )
+            ),
+        )
     """
     from qiskit_metal import designs
     from qiskit_metal.qlibrary.qubits.transmon_cross import TransmonCross
     from qiskit_metal.toolbox_python.attr_dict import Dict
 
     design = designs.DesignPlanar()
+    # Same structure as Example 02 build_and_mesh (cross_length + claw pad lengths).
     options = Dict(
         cross_length=f"{cross_length_um}um",
         connection_pads=Dict(

@@ -64,5 +64,6 @@ Tools: `run_study_from_spec`, `get_study_result`, `evaluate_targets_tool`.
 ## Notes
 
 - Template: grounded **TransmonCross** (Example 02 style), 4D search including **L_J**.
+- Geometry maps to Metal options: top-level ``cross_length``; ``connection_pads.claw.claw_length`` and ``ground_spacing`` (``claw_gap`` fixed at 4 µm).
 - SQuADDS is **not** a dependency; parameter names are conventional only.
 - Slurm / multi-qubit: not in v0.
