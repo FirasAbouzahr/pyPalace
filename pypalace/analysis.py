@@ -126,9 +126,9 @@ class EPR:
         
         
         alpha_q = 2*pi*alpha_q
-        
         delta = 2*pi*(f_r - f_q)
         sigma = 2*pi*(f_q + f_r)
+        chi = 2*pi*chi
         denom = alpha_q/(delta *(delta - alpha_q)) + alpha_q/(sigma*(sigma + alpha_q))
         g = np.sqrt(chi/denom/2)
         

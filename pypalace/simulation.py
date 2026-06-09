@@ -277,9 +277,53 @@ class Simulation:
             freqs.columns = ["m","frequency_GHz","frequency_Im","Q"]
             f_complex = freqs[freqs.m == mode].frequency_Im.iloc[0]*1e9
             
-            kappa = 2*f_complex
+            kappa = abs(2*f_complex)
             
             return kappa
+            
+    def get_kappa_ext(self,mode:int,ports:list):
+        """
+        Compute the external linewidth (kappa_ext) of a specified eigenmode from specified external ports.
+
+        Parameters
+        ----------
+        mode : int
+            Eigenmode index.
+        ports : list
+            List of port indexes to calculate kappa_ext from.
+
+        Returns
+        -------
+        float
+            kappa_ext in Hz.
+
+        Raises
+        ------
+        ValueError
+            If the simulation type is not eigenmode.
+        """
+        
+        if self.config.config["Problem"]["Type"] != "Eigenmode":
+            raise ValueError("Simulation type is not eigenmode, no k_ext to extract from ports")
+            
+        else:
+        
+            try:
+                portQ_results = self.config.config["Problem"]["Output"]+"/port-Q.csv"
+                portQ = pd.read_csv(portQ_results)
+                portQ_i = portQ[portQ['        m'] == mode]
+                label = '             κ_ext[{}] (GHz)'
+                
+                kappa_ext = 0
+                for port in ports:
+                    kappa_ext += abs(portQ_i[label.format(port)].iloc[0])
+                
+                kappa_ext = kappa_ext * 1e9
+
+                return kappa_ext
+                
+            except:
+                raise ValueError("Are you sure there are external ports defined?")
                 
     def get_portEPR(self,port_index:int,mode:int):
         """
@@ -311,7 +355,7 @@ class Simulation:
             EPR = pd.read_csv(EPR_results,usecols=[0,port_index])
             EPR.columns = ["m","EPR"]
             p_i = EPR[EPR.m == mode].EPR.iloc[0]
-            return p_i
+            return abs(p_i)
             
         except:
             raise ValueError("Are you sure you defined a port?")
