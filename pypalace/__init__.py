@@ -1,4 +1,5 @@
 from .config import Config
+from .palace_env import *
 
 __all__ = ["Config", "Simulation", "Mesh", "mesh"]
 

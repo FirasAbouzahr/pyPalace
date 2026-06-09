@@ -14,6 +14,7 @@ import pyvista as pv
 import numpy as np
 import json
 from .config import Config
+from .palace_env import *
 
 class Simulation:
 

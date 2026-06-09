@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from shapely.affinity import scale as shapely_scale
-from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.geometry import CAP_STYLE, JOIN_STYLE, LineString, MultiLineString, MultiPolygon, Point, Polygon
 from shapely.ops import unary_union
 
 class Mesh:
@@ -114,6 +114,273 @@ class Mesh:
             
         return pd.DataFrame(attributes_dict,index = None)
 
+
+    @staticmethod
+    def _parse_qmetal_length(value: Any, design: Any) -> float:
+        """Parse a Qiskit Metal length into design units (mm by default)."""
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            raise ValueError("Missing length value for path geometry.")
+
+        if isinstance(value, (int, float, np.floating, np.integer)):
+            return float(value)
+
+        text = str(value).strip().lower().replace(" ", "")
+        text = text.replace("μm", "um").replace("µm", "um")
+
+        suffixes = {
+            "m": 1.0,
+            "meter": 1.0,
+            "meters": 1.0,
+            "mm": 1e-3,
+            "millimeter": 1e-3,
+            "millimeters": 1e-3,
+            "um": 1e-6,
+            "micron": 1e-6,
+            "microns": 1e-6,
+            "nm": 1e-9,
+            "nanometer": 1e-9,
+            "nanometers": 1e-9,
+        }
+
+        for suffix, meters_per_unit in sorted(
+            suffixes.items(), key=lambda item: len(item[0]), reverse=True
+        ):
+            if text.endswith(suffix):
+                number = float(text[: -len(suffix)])
+                meters = number * meters_per_unit
+                design_meters = Mesh._qmetal_design_unit_to_meters(design)
+                return meters / design_meters
+
+        return float(text)
+
+    @staticmethod
+    def _parse_qmetal_fillet(value: Any, design: Any) -> float:
+        """Return fillet radius in design units; 0 means no fillet."""
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return 0.0
+        if isinstance(value, (int, float, np.floating, np.integer)):
+            return max(0.0, float(value))
+        return max(0.0, Mesh._parse_qmetal_length(value, design))
+
+    @staticmethod
+    def _fillet_linestring(
+        line: LineString,
+        fillet: float,
+        design: Any,
+        *,
+        resolution: int = 16,
+    ) -> LineString:
+        """Round path corners the same way QM's MPL renderer does."""
+        if fillet <= 0 or line.is_empty or len(line.coords) <= 2:
+            return line
+
+        try:
+            from qiskit_metal.renderers.renderer_mpl.mpl_renderer import QMplRenderer
+
+            renderer = QMplRenderer(design)
+            renderer.options.resolution = str(resolution)
+            row = pd.Series({"geometry": line, "fillet": float(fillet)})
+            filleted = renderer.fillet_path(row)
+            if isinstance(filleted, LineString) and not filleted.is_empty:
+                return filleted
+        except Exception as exc:
+            print(
+                "USER WARNING: Could not apply QM fillet to path; "
+                f"using sharp corners. ({exc})"
+            )
+
+        return line
+
+    @staticmethod
+    def _line_like_to_polygons(
+        geom: Any,
+        width: float,
+        *,
+        fillet: Any = None,
+        design: Any | None = None,
+        path_resolution: int = 16,
+    ) -> list[Polygon]:
+        """Buffer a QM path centerline into imprintable polygon sheet(s)."""
+        if width <= 0:
+            raise ValueError(f"Path width must be positive, got {width!r}.")
+
+        if geom is None or geom.is_empty:
+            return []
+
+        if geom.geom_type == "LineString":
+            lines = [geom]
+        elif geom.geom_type == "MultiLineString":
+            lines = list(geom.geoms)
+        else:
+            raise ValueError(
+                f"Expected LineString or MultiLineString for path geometry, got {geom.geom_type!r}."
+            )
+
+        fillet_radius = 0.0
+        if design is not None:
+            fillet_radius = Mesh._parse_qmetal_fillet(fillet, design)
+
+        polygons: list[Polygon] = []
+        for line in lines:
+            if line.is_empty:
+                continue
+
+            if fillet_radius > 0 and design is not None:
+                line = Mesh._fillet_linestring(
+                    line,
+                    fillet_radius,
+                    design,
+                    resolution=path_resolution,
+                )
+
+            buffered = line.buffer(
+                width / 2.0,
+                cap_style=CAP_STYLE.flat,
+                join_style=JOIN_STYLE.mitre,
+                quad_segs=int(path_resolution),
+            )
+
+            if buffered.is_empty:
+                continue
+            if isinstance(buffered, Polygon):
+                polygons.append(buffered)
+            elif isinstance(buffered, MultiPolygon):
+                polygons.extend(buffered.geoms)
+
+        return polygons
+
+    @staticmethod
+    def _qmetal_component_id_to_name(design: Any) -> dict[int, str]:
+        """Map QM internal component IDs to user-facing names."""
+        mapping: dict[int, str] = {}
+        components = getattr(design, "components", None)
+        if components is None:
+            return mapping
+
+        for name, component in components.items():
+            comp_id = getattr(component, "id", None)
+            if comp_id is None:
+                continue
+            mapping[int(comp_id)] = str(name)
+
+        return mapping
+
+    @staticmethod
+    def _collect_qm_imprint_surfaces(design: Any) -> pd.DataFrame:
+        """
+        Internal: merge QM ``poly`` rows with buffered ``path`` rows.
+
+        Path centerlines are filleted (when ``fillet`` is set) then buffered
+        to polygons before meshing. Returns QM-native columns, including
+        ``component`` (internal component ID).
+        """
+        tables = design.qgeometry.tables
+        poly_df = tables["poly"].copy() if "poly" in tables else pd.DataFrame()
+        path_df = tables["path"].copy() if "path" in tables else pd.DataFrame()
+
+        rows: list[dict[str, Any]] = []
+        columns = [
+            "component",
+            "name",
+            "geometry",
+            "layer",
+            "subtract",
+            "helper",
+            "chip",
+            "fillet",
+        ]
+
+        if not poly_df.empty:
+            for _, row in poly_df.iterrows():
+                rows.append(
+                    {
+                        "component": row["component"],
+                        "name": str(row["name"]),
+                        "geometry": row["geometry"],
+                        "layer": row.get("layer", 1),
+                        "subtract": bool(row.get("subtract", False)),
+                        "helper": bool(row.get("helper", False)),
+                        "chip": row.get("chip", "main"),
+                        "fillet": row.get("fillet", np.nan),
+                    }
+                )
+
+        path_warnings: list[str] = []
+        if not path_df.empty:
+            for _, row in path_df.iterrows():
+                name = str(row["name"])
+                component = row["component"]
+                try:
+                    width = Mesh._parse_qmetal_length(row.get("width"), design)
+                    polygons = Mesh._line_like_to_polygons(
+                        row["geometry"],
+                        width,
+                        fillet=row.get("fillet"),
+                        design=design,
+                    )
+                except Exception as exc:
+                    path_warnings.append(
+                        f"Skipped path ({component!r}, {name!r}): {exc}"
+                    )
+                    continue
+
+                if not polygons:
+                    path_warnings.append(
+                        f"Skipped empty buffered path ({component!r}, {name!r})."
+                    )
+                    continue
+
+                geometry = (
+                    polygons[0] if len(polygons) == 1 else MultiPolygon(polygons)
+                )
+                rows.append(
+                    {
+                        "component": component,
+                        "name": name,
+                        "geometry": geometry,
+                        "layer": row.get("layer", 1),
+                        "subtract": bool(row.get("subtract", False)),
+                        "helper": bool(row.get("helper", False)),
+                        "chip": row.get("chip", "main"),
+                        "fillet": row.get("fillet", np.nan),
+                    }
+                )
+
+        if path_warnings:
+            print("USER WARNING: " + "; ".join(path_warnings))
+
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        return pd.DataFrame(rows)[columns]
+
+    @staticmethod
+    def get_quantum_metal_surfaces(design: Any) -> pd.DataFrame:
+        """
+        User-facing table of imprintable surfaces (pads, CPW, resonators).
+
+        Use this to choose ``Attributes`` names and to see metal vs etch.
+        Does not affect meshing internals.
+        """
+        surfaces = Mesh._collect_qm_imprint_surfaces(design)
+        if surfaces.empty:
+            return pd.DataFrame(
+                columns=["component_id", "component_name", "name", "subtract"]
+            )
+
+        id_to_name = Mesh._qmetal_component_id_to_name(design)
+
+        friendly = pd.DataFrame(
+            {
+                "component_id": surfaces["component"].astype(int),
+                "component_name": surfaces["component"].astype(int).map(id_to_name),
+                "name": surfaces["name"].astype(str),
+                "subtract": surfaces["subtract"].astype(bool),
+            }
+        )
+        return friendly
+
+
     def _qmetal_design_unit_to_meters(design: Any) -> float:
         """Return meters per Qiskit Metal design unit.
 
@@ -205,12 +472,10 @@ class Mesh:
         """
         
         import gmsh
-        
-        
-        poly_df = design.qgeometry.tables["poly"].copy()
-        
-        def polygon_needs_dedupe(p):
-            """True if any consecutive exterior or hole vertices are identical."""
+
+        surfaces_df = Mesh._collect_qm_imprint_surfaces(design).copy()
+
+        def polygon_needs_dedupe(p: Polygon) -> bool:
             ext = list(p.exterior.coords)[:-1]
             for i in range(len(ext)):
                 if ext[i] == ext[(i + 1) % len(ext)]:
@@ -222,29 +487,32 @@ class Mesh:
                         return True
             return False
 
-        damaged_goods = []
-        for _, row in poly_df.iterrows():
+        damaged_goods: list[tuple[Any, str, Any]] = []
+        for _, row in surfaces_df.iterrows():
             g = row["geometry"]
             polys = [g] if g.geom_type == "Polygon" else list(g.geoms)
             for p in polys:
                 if polygon_needs_dedupe(p):
-                    damaged_goods.append((row["component"], row["name"], row.get("subtract")))
-            
-        damaged_goods = np.array(damaged_goods)
+                    damaged_goods.append(
+                        (row["component"], row["name"], row.get("subtract"))
+                    )
 
         num_to_repair = len(damaged_goods)
-
         if num_to_repair > 0:
-            print(f"USER WARNING: {num_to_repair} geometry component(s) found with one or more consecutive duplicate vertices -- repairing now for meshing")
+            print(
+                "USER WARNING: "
+                f"{num_to_repair} geometry component(s) found with one or more "
+                "consecutive duplicate vertices -- repairing now for meshing"
+            )
 
-        def dedupe_exterior(poly):
+        def dedupe_exterior(poly: Polygon) -> Polygon:
             coords = list(poly.exterior.coords)
             out = [coords[0]]
             for c in coords[1:]:
                 if c != out[-1]:
                     out.append(c)
             if out[0] == out[-1]:
-                out[-1] = out[0]  # keep closed ring
+                out[-1] = out[0]
             holes = []
             for interior in poly.interiors:
                 h = list(interior.coords)
@@ -255,18 +523,23 @@ class Mesh:
                 holes.append(hout)
             return Polygon(out, holes)
 
-        for fixer_upper in damaged_goods:
-            comp,name,substract = fixer_upper[0],fixer_upper[1],fixer_upper[2]
-            idx = poly_df[(poly_df["name"] == name) & (poly_df["helper"] == False)].index[0]
-            g = poly_df.at[idx, "geometry"]
+        for component, name, _subtract in damaged_goods:
+            mask = (
+                (surfaces_df["name"] == name)
+                & (surfaces_df["component"] == component)
+                & (surfaces_df["helper"] == False)
+            )
+            idx = surfaces_df.loc[mask].index[0]
+            g = surfaces_df.at[idx, "geometry"]
             if g.geom_type == "Polygon":
-                poly_df.at[idx, "geometry"] = dedupe_exterior(g)
+                surfaces_df.at[idx, "geometry"] = dedupe_exterior(g)
             else:
-                poly_df.at[idx, "geometry"] = MultiPolygon([dedupe_exterior(p) for p in g.geoms])
+                surfaces_df.at[idx, "geometry"] = MultiPolygon(
+                    [dedupe_exterior(p) for p in g.geoms]
+                )
 
         if num_to_repair > 0:
             print(f"{num_to_repair} geometry component(s) sucessfully repaired")
-
 
         Attributes = dict(Attributes or {})
         output_path = Path(output_mesh)
@@ -307,8 +580,8 @@ class Mesh:
         ground_plane_attr = int(ground_plane_attr)
         farfield_attr = int(farfield_attr)
 
-        if "helper" in poly_df.columns:
-            poly_df = poly_df[poly_df["helper"] == False]
+        if "helper" in surfaces_df.columns:
+            surfaces_df = surfaces_df[surfaces_df["helper"] == False]
 
         def polygons_from_geometry(geom: Any) -> list[Polygon]:
             if isinstance(geom, Polygon):
@@ -318,7 +591,10 @@ class Mesh:
             return []
 
         PolyAttributeKey = str | tuple[Any, str]
-        def lookup_attr(component: Any, name: str) -> tuple[int | None, PolyAttributeKey | None]:
+
+        def lookup_attr(
+            component: Any, name: str
+        ) -> tuple[int | None, PolyAttributeKey | None]:
             if (component, name) in Attributes:
                 return Attributes[(component, name)], (component, name)
             if name in Attributes:
@@ -326,7 +602,7 @@ class Mesh:
             return None, None
 
         records: list[dict[str, Any]] = []
-        for _, row in poly_df.iterrows():
+        for _, row in surfaces_df.iterrows():
             name = str(row["name"])
             component = row["component"]
             attr, key = lookup_attr(component, name)
@@ -335,7 +611,10 @@ class Mesh:
             for polygon in polygons_from_geometry(row["geometry"]):
                 if mesh_scale != 1.0:
                     polygon = shapely_scale(
-                        polygon, xfact=mesh_scale, yfact=mesh_scale, origin=(0.0, 0.0)
+                        polygon,
+                        xfact=mesh_scale,
+                        yfact=mesh_scale,
+                        origin=(0.0, 0.0),
                     )
                 records.append(
                     {
@@ -349,16 +628,19 @@ class Mesh:
                 )
 
         if not records:
-            raise ValueError('No polygon geometry found in design.qgeometry.tables["poly"].')
+            raise ValueError(
+                "No surface geometry found in Quantum Metal design "
+                "(poly + buffered path tables are empty)."
+            )
 
         warnings: list[str] = []
         present_keys = {(record["component"], record["name"]) for record in records}
         present_names = {record["name"] for record in records}
         for key in Attributes:
             if isinstance(key, tuple) and key not in present_keys:
-                warnings.append(f"Attributes key {key!r} matched no poly row")
+                warnings.append(f"Attributes key {key!r} matched no surface row")
             elif isinstance(key, str) and key not in present_names:
-                warnings.append(f"Attributes key {key!r} matched no poly row")
+                warnings.append(f"Attributes key {key!r} matched no surface row")
 
         tagged_records = [record for record in records if record["attribute"] is not None]
 
@@ -371,7 +653,6 @@ class Mesh:
         dx = xmax - xmin
         dy = ymax - ymin
         z_substrate_bottom = -substrate_thickness
-        bounding_box = (xmin, ymin, z_substrate_bottom, xmax, ymax, airbox_height)
 
         def add_polygon_surface(polygon: Polygon, z: float, lc: float) -> int:
             coords = list(polygon.exterior.coords)
@@ -586,7 +867,7 @@ class Mesh:
         finally:
             if owns_gmsh and gmsh.isInitialized():
                 gmsh.finalize()
-                
+
         mesh_attributes = Mesh.get_mesh_attributes(output_mesh)
         mesh_attributes = mesh_attributes.sort_values("ID")
         return mesh_attributes
