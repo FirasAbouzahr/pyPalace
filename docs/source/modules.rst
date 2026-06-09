@@ -46,6 +46,14 @@ pypalace.meshing module
    :show-inheritance:
    :undoc-members:
 
+pypalace.palace_env module
+--------------------------
+
+.. automodule:: pypalace.palace_env
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 Package contents
 ----------------
 

@@ -45,11 +45,15 @@ Palace field semantics are documented in the
 Running Palace
 --------------
 
+Pass an explicit path, or resolve the binary with :func:`~pypalace.palace_env.get_palace_executable`
+when Palace is on ``PATH`` or ``PATH_TO_PALACE`` is set (see :ref:`install`):
+
 .. code-block:: python
 
+   from pypalace.palace_env import get_palace_executable
    from pypalace.simulation import Simulation
 
-   palace = "/path/to/palace-x86_64.bin"
+   palace = get_palace_executable()  # or: "/path/to/palace-x86_64.bin"
    sim = Simulation(cfg, palace)
    sim.run(n=8)  # local MPI ranks
 
@@ -60,7 +64,7 @@ For clusters, pass ``HPC_options`` from :meth:`~pypalace.simulation.Simulation.H
 Mesh generation (Quantum Metal)
 -------------------------------
 
-For coplanar designs in Qiskit Metal, :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design` writes a tagged Gmsh mesh and returns attribute metadata. Extra packages are required — see :ref:`install`.
+For coplanar designs in Qiskit Metal, :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design` writes a tagged Gmsh mesh and returns attribute metadata. Install ``qiskit-metal`` in addition to ``pypalace`` — see :ref:`install`.
 
 
 Analysis workflows (qubit-focused examples)

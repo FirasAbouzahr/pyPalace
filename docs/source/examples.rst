@@ -14,8 +14,9 @@ Clone the repo so notebook paths to ``mesh/``, ``config/``, and ``*_output/`` re
    git clone https://github.com/FirasAbouzahr/pyPalace.git
    cd pyPalace
 
-Each folder has a README with figures and run notes. Before simulating, set ``palace`` (or
-``path_to_palace``) to your local ``palace-x86_64.bin``.
+Each folder has a README with figures and run notes. Before simulating, set ``path_to_palace``
+to your Palace binary, or use :func:`~pypalace.palace_env.get_palace_executable` when Palace is
+on ``PATH`` (see :ref:`install`).
 
 The notebooks are written for superconducting-qubit workflows, but the same pattern—config,
 ``Simulation.run``, then postprocess Palace output—applies to any Palace problem type you
@@ -33,7 +34,7 @@ Example 00 — Quantum Metal → pyPalace
 `example_00_Quantum_Metal_to_pyPalace <https://github.com/FirasAbouzahr/pyPalace/tree/main/Examples/example_00_Quantum_Metal_to_pyPalace>`_
 
 Mesh a coplanar Qiskit Metal design, build a config, run Palace, and analyze results.
-Main file: ``example00_notebook.ipynb``. Requires ``gmsh``, ``shapely``, ``qiskit-metal`` (:ref:`install`).
+Main file: ``example00_notebook.ipynb``. Requires ``qiskit-metal`` in addition to ``pypalace`` (:ref:`install`).
 
 
 Example 01 — Eigenmode & EPR
