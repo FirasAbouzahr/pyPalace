@@ -360,16 +360,16 @@ class Simulation:
         except:
             raise ValueError("Are you sure you defined a port?")
 
-    def get_Sij(self, index1: int, index2: int):
+    def get_Sij(self, index2: int, index1: int):
         """
         Extract S-parameters between two ports from a driven simulation.
 
         Parameters
         ----------
-        index1 : int
-            input port index.
         index2 : int
             output port index.
+        index1 : int
+            input port index.
 
         Returns
         -------
@@ -397,7 +397,7 @@ class Simulation:
                 f_GHz = Smatrix['        f (GHz)'].to_numpy()
                 ReSij_column = Smatrix[ReSij].to_numpy()
                 ImSij_column = Smatrix[ImSij].to_numpy()
-                columns = ["frequency_GHz","|S[{}][{}]| (dB)".format(index1,index2),"arg(S[{}][{}]) (deg)".format(index1,index2)]
+                columns = ["frequency_GHz","|S[{}][{}]| (dB)".format(index2,index1),"arg(S[{}][{}]) (deg)".format(index2,index1)]
                 Scustom = pd.DataFrame({columns[0]:f_GHz,columns[1]:ReSij_column,columns[2]:ImSij_column})
                 return Scustom
                 
@@ -576,8 +576,6 @@ class Simulation:
         fig,ax = plt.subplots()
         sc = plt.scatter(x_plot, y_plot, c=data, s=1, cmap=cmap, vmin=vmin, vmax=vmax)
         plt.colorbar(sc)
-        plt
-        
         
         if save != None:
             plt.savefig(save)
