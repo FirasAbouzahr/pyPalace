@@ -1,8 +1,10 @@
 from pypalace import Config, Simulation,Tools
 from pypalace.builder import Model, Domains, Boundaries, Solver
+from pypalace.palace_env import get_palace_executable
 
 ''' paths '''
-path_to_palace = "/projects/p32999/palace/palace_install/bin/palace-x86_64.bin"
+#path_to_palace = "path/to/AWSPalace/install/bin/palace-<your architecture>.bin"
+path_to_palace = get_palace_executable() # or if you have palace already added to path
 mesh_dir = "mesh/"
 config_dir = "config/"
 
