@@ -58,11 +58,27 @@ Notebooks and plotting use dependencies already required by ``pypalace``. Instal
 Point pyPalace at Palace
 ------------------------
 
-When you run a simulation, pass the path to your Palace binary:
+When you run a simulation, pass the path to your Palace binary.
+
+**Explicit path** — use this when Palace is not on your ``PATH``:
 
 .. code-block:: python
 
+   from pypalace.simulation import Simulation
+
    palace = "/path/to/palace_install/bin/palace-x86_64.bin"
+   my_sim = Simulation(config_object, palace)
+
+**Automatic resolution** — if ``palace``, ``palace-x86_64.bin``, or ``palace-arm64.bin`` is on
+your ``PATH``, or you set ``PATH_TO_PALACE`` to the binary, use
+:func:`~pypalace.palace_env.get_palace_executable`:
+
+.. code-block:: python
+
+   from pypalace.palace_env import get_palace_executable
+   from pypalace.simulation import Simulation
+
+   palace = get_palace_executable()
    my_sim = Simulation(config_object, palace)
 
 
@@ -77,12 +93,13 @@ produces a Palace-compatible file—Cubit, Gmsh, COMSOL export, and others—the
 
 pyPalace does not require a single mesh source. Example 00 shows one optional path:
 meshing a coplanar layout from `Quantum Metal <https://qiskit-community.github.io/qiskit-metal/>`_
-(formerly Qiskit Metal) with :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design`. That path
-needs extra packages:
+(formerly Qiskit Metal) with :meth:`~pypalace.Mesh.mesh_Quantum_Metal_design`. That workflow
+requires `Quantum Metal <https://qiskit-community.github.io/qiskit-metal/>`_ in addition to
+``pypalace`` (``gmsh`` and ``shapely`` are already dependencies of ``pypalace``):
 
 .. code-block:: bash
 
-   pip install gmsh shapely qiskit-metal
+   pip install qiskit-metal
 
 Other tutorials ship pre-built ``.bdf`` or ``.msh`` meshes. To list physical groups when
 writing configs, use :meth:`~pypalace.Mesh.get_mesh_attributes`::
