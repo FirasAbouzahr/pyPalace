@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, least_squares
 
 ''' backend functions for DCM fitting '''
 
@@ -25,11 +25,11 @@ class DCM_backend:
         return theta0 + sign * 2 * np.arctan(2 * (f - f0) / kappa)
 
     @staticmethod
-    def _angle_model_fixed_sign(sign):
-        def model(f, f0, kappa, theta0):
-            return DCM_backend.angle_model(f, f0, kappa, theta0, sign)
-
-        return model
+    def _dcm_complex_model(
+        f: np.ndarray, ax: float, ay: float, R: float, f0: float, kappa: float, theta0: float, sign: float
+    ) -> np.ndarray:
+        phi = DCM_backend.angle_model(f, f0, kappa, theta0, sign)
+        return ax + 1j * ay + R * np.exp(1j * phi)
 
     @staticmethod
     def _parse_sij(S_ij: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -84,96 +84,87 @@ class DCM_backend:
         return f[mask], mag_db[mask], phase_deg[mask]
 
     @staticmethod
-    def _notch_power(f: np.ndarray, f0: float, kappa: float, depth: float, base: float) -> np.ndarray:
-        return base - depth / (1 + (2 * (f - f0) / kappa) ** 2)
+    def _dcm_complex_residuals(params, f, S21, sign):
+        ax, ay, R, f0, kappa, theta0 = params
+        model = DCM_backend._dcm_complex_model(f, ax, ay, R, f0, kappa, theta0, sign)
+        diff = model - S21
+        return np.r_[diff.real, diff.imag]
 
     @staticmethod
-    def _notch_mag_db(f: np.ndarray, f0: float, kappa: float, depth: float, base: float) -> np.ndarray:
-        power = DCM_backend._notch_power(f, f0, kappa, depth, base)
-        return 10 * np.log10(np.maximum(power, 1e-30))
-
-    @staticmethod
-    def _fit_magnitude_notch(
-        f: np.ndarray, mag_db: np.ndarray
-    ) -> tuple[float, float, float, float, float, float]:
-        """Lorentzian notch fit in linear power when the DCM phase arc is too short."""
-        power = 10 ** (mag_db / 10.0)
-        f0_guess = float(f[int(np.argmin(mag_db))])
-        kappa_guess = DCM_backend._kappa_guess_from_mag(f, mag_db)
-        n_edge = max(2, len(power) // 10)
-        base_guess = float(np.median(np.r_[power[:n_edge], power[-n_edge:]]))
-        depth_guess = float(max(base_guess - power.min(), 1e-30))
+    def _fit_dcm_complex(
+        f: np.ndarray, S21: np.ndarray, mag_db: np.ndarray
+    ) -> tuple[float, float, float, float, float, float, float, float, float]:
+        """
+        Fit the full DCM model in the IQ plane:
+        S21(f) = (a + ib) + R * exp(i * (theta0 + sign * 2 arctan(2*(f-f0)/kappa)))
+        """
+        f0_idx = int(np.argmin(mag_db))
+        f0_guess = float(f[f0_idx])
         f_span = float(f[-1] - f[0])
         df_min = float(np.min(np.diff(f))) if len(f) > 1 else 1e6
-
-        popt, _ = curve_fit(
-            DCM_backend._notch_power,
-            f,
-            power,
-            p0=[f0_guess, kappa_guess, depth_guess, base_guess],
-            bounds=(
-                [float(f[0]), df_min, 0.0, 0.0],
-                [float(f[-1]), max(f_span * 10.0, df_min * 10.0), base_guess * 2.0, base_guess * 2.0],
-            ),
-            maxfev=10000,
+        kappa_guess = float(
+            np.clip(DCM_backend._kappa_guess_from_mag(f, mag_db), df_min, max(f_span, df_min))
         )
-        f0_fit, kappa_fit, depth_fit, base_fit = map(float, popt)
-        pred = DCM_backend._notch_power(f, f0_fit, kappa_fit, depth_fit, base_fit)
-        rmse = float(np.sqrt(np.mean((pred - power) ** 2)))
-        return f0_fit, kappa_fit, depth_fit, base_fit, rmse
 
-    @staticmethod
-    def _fit_phase_arc(
-        f: np.ndarray, phi: np.ndarray, mag_db: np.ndarray
-    ) -> tuple[float, float, float, float, float]:
-        """Fit (f0, kappa, theta0, sign) to unwrapped phase; return fit + rmse."""
-        f0_guess = float(f[int(np.argmin(mag_db))])
-        f_span = float(f[-1] - f[0])
-        df_min = float(np.min(np.diff(f))) if len(f) > 1 else 1e6
+        a, b, R0 = DCM_backend.fit_to_circle(S21.real, S21.imag)
+        if R0 <= 0 or not np.isfinite(R0):
+            raise ValueError("DCM circle fit failed (non-positive or invalid radius).")
 
-        dphi_df = np.abs(np.gradient(phi, f))
-        if np.max(dphi_df) > 1e-12:
-            kappa_guess = 4.0 / np.max(dphi_df)
-        else:
-            kappa_guess = DCM_backend._kappa_guess_from_mag(f, mag_db)
+        center = a + 1j * b
+        theta0_guess = float(np.angle(S21[f0_idx] - center))
 
-        kappa_guess = float(np.clip(kappa_guess, df_min, max(f_span, df_min)))
-        phi_guess = float(phi[int(np.argmin(np.abs(f - f0_guess)))])
-
-        f_lo, f_hi = float(f[0]), float(f[-1])
-        kappa_lo = df_min
-        kappa_hi = max(f_span * 2.0, df_min * 10.0)
-
-        best: tuple[float, float, float, float, float] | None = None
+        best: tuple[float, float, float, float, float, float, float, float, float] | None = None
 
         for sign in (1.0, -1.0):
-            model = DCM_backend._angle_model_fixed_sign(sign)
+            p0 = [a, b, R0, f0_guess, kappa_guess, theta0_guess]
+            lower = [-np.inf, -np.inf, 0.0, float(f[0]), df_min, -np.pi]
+            upper = [np.inf, np.inf, np.inf, float(f[-1]), max(kappa_guess * 10.0, f_span), np.pi]
+
             try:
-                popt, _ = curve_fit(
-                    model,
-                    f,
-                    phi,
-                    p0=[f0_guess, kappa_guess, phi_guess],
-                    bounds=([f_lo, kappa_lo, -np.inf], [f_hi, kappa_hi, np.inf]),
-                    maxfev=5000,
+                result = least_squares(
+                    DCM_backend._dcm_complex_residuals,
+                    p0,
+                    args=(f, S21, sign),
+                    bounds=(lower, upper),
+                    max_nfev=10000,
                 )
             except Exception:
                 continue
 
-            f0_fit, kappa_fit, theta0_fit = map(float, popt)
-            resid = model(f, f0_fit, kappa_fit, theta0_fit) - phi
-            rmse = float(np.sqrt(np.mean(resid**2)))
+            ax, ay, R, f0_fit, kappa_fit, theta0_fit = map(float, result.x)
+            pred = DCM_backend._dcm_complex_model(f, ax, ay, R, f0_fit, kappa_fit, theta0_fit, sign)
+            rmse_db = float(
+                np.sqrt(np.mean((20 * np.log10(np.maximum(np.abs(pred), 1e-30)) - mag_db) ** 2))
+            )
+            at_kappa_bound = kappa_fit >= 0.99 * upper[4]
+            f0_penalty = abs(f0_fit - f0_guess) / max(f_span, df_min)
+            score = rmse_db + 5.0 * float(at_kappa_bound) + f0_penalty
 
-            if best is None or rmse < best[4]:
-                best = (f0_fit, kappa_fit, theta0_fit, sign, rmse)
+            if best is None or score < best[8]:
+                best = (
+                    f0_fit,
+                    kappa_fit,
+                    theta0_fit,
+                    sign,
+                    ax,
+                    ay,
+                    R,
+                    rmse_db,
+                    score,
+                )
 
         if best is None:
             raise RuntimeError(
-                "DCM phase fit did not converge. Use a narrower frequency window "
-                "and finer FreqStep around the resonance (see Example 03)."
+                "DCM fit did not converge. Narrow MinFreq/MaxFreq around the "
+                "resonance and use a finer FreqStep (see Example 03)."
             )
 
-        return best
+        f0_fit, kappa_fit, theta0_fit, sign_fit, ax, ay, R, rmse_db, _ = best
+        shift = ax + 1j * ay
+        iq_rmse = float(
+            np.sqrt(np.mean(np.abs(DCM_backend._dcm_complex_model(f, ax, ay, R, f0_fit, kappa_fit, theta0_fit, sign_fit) - S21) ** 2))
+        )
+        return f0_fit, kappa_fit, theta0_fit, sign_fit, shift, R, rmse_db, iq_rmse
 
     @staticmethod
     def _validate_fit(
@@ -181,12 +172,10 @@ class DCM_backend:
         mag_db: np.ndarray,
         f0_fit: float,
         kappa_fit: float,
-        rmse: float,
-        phi: np.ndarray,
+        rmse_db: float,
     ) -> None:
         f_dip = float(f[int(np.argmin(mag_db))])
         f_span = float(f[-1] - f[0])
-        phi_span = float(np.ptp(phi))
 
         if f_span <= 0:
             raise ValueError("S_ij frequency column must span more than one distinct point.")
@@ -202,20 +191,13 @@ class DCM_backend:
         if kappa_fit <= 0 or q_loaded < 10:
             raise ValueError(
                 f"DCM fit failed sanity check: kappa={kappa_fit/1e3:.3f} kHz "
-                f"(Q_loaded={q_loaded:.1f}). Data likely has too few points through "
-                f"the resonance for a reliable linewidth."
+                f"(Q_loaded={q_loaded:.1f}). Refine the frequency grid near f0."
             )
 
-        if phi_span < 0.1:
+        if rmse_db > 15.0:
             raise ValueError(
-                "DCM fit failed sanity check: phase on the normalized circle "
-                "barely changes across the sweep. Refine the frequency grid near f0."
-            )
-
-        if rmse > 0.5:
-            raise ValueError(
-                f"DCM fit failed sanity check: phase residual RMSE={rmse:.3f} rad "
-                f"is too large for a reliable kappa."
+                f"DCM fit failed sanity check: |S21| residual RMSE={rmse_db:.2f} dB "
+                f"is too large for a reliable linewidth."
             )
 
     @staticmethod
@@ -235,42 +217,18 @@ class DCM_backend:
         S21_complex = (10 ** (mag_db / 20.0)) * np.exp(1j * np.deg2rad(phase_deg))
         f_dip = float(f[int(np.argmin(mag_db))])
 
-        a, b, R = DCM_backend.fit_to_circle(S21_complex.real, S21_complex.imag)
-        if R <= 0 or not np.isfinite(R):
-            raise ValueError("DCM circle fit failed (non-positive or invalid radius).")
+        (
+            f0_fit,
+            kappa_fit,
+            theta0_fit,
+            sign_fit,
+            shift,
+            R,
+            rmse_db,
+            iq_rmse,
+        ) = DCM_backend._fit_dcm_complex(f, S21_complex, mag_db)
 
-        shift = a + 1j * b
-        S21_norm = (S21_complex - shift) / R
-        phi = np.unwrap(np.arctan2(S21_norm.imag, S21_norm.real))
-        phi_span = float(np.ptp(phi))
-
-        method = "DCM"
-        notch_depth = np.nan
-        notch_base = np.nan
-        theta0_fit = 0.0
-        sign_fit = 1.0
-
-        use_dcm = phi_span >= 0.5
-        if use_dcm:
-            try:
-                f0_fit, kappa_fit, theta0_fit, sign_fit, rmse = DCM_backend._fit_phase_arc(
-                    f, phi, mag_db
-                )
-                DCM_backend._validate_fit(f, mag_db, f0_fit, kappa_fit, rmse, phi)
-            except (RuntimeError, ValueError):
-                use_dcm = False
-
-        if not use_dcm:
-            method = "magnitude"
-            f0_fit, kappa_fit, notch_depth, notch_base, rmse = DCM_backend._fit_magnitude_notch(
-                f, mag_db
-            )
-            q_loaded = f0_fit / kappa_fit if kappa_fit > 0 else 0.0
-            if kappa_fit <= 0 or q_loaded < 10:
-                raise ValueError(
-                    f"Resonator fit failed: kappa={kappa_fit/1e3:.3f} kHz "
-                    f"(Q_loaded={q_loaded:.1f})."
-                )
+        DCM_backend._validate_fit(f, mag_db, f0_fit, kappa_fit, rmse_db)
 
         return (
             f0_fit,
@@ -281,9 +239,7 @@ class DCM_backend:
             R,
             f,
             S21_complex,
-            rmse,
+            iq_rmse,
             f_dip,
-            method,
-            notch_depth,
-            notch_base,
+            rmse_db,
         )
