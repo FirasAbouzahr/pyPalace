@@ -397,7 +397,8 @@ class resonator_analysis:
         Returns
         -------
         dict
-            ``frequency_GHz``, ``kappa_kHz``, ``frequency_dip_GHz``, ``fit_rmse``.
+            ``frequency_GHz``, ``kappa_kHz``, ``frequency_dip_GHz``, ``fit_rmse``,
+            and ``method`` (``"DCM"`` or ``"magnitude"``).
 
         Raises
         ------
@@ -417,18 +418,28 @@ class resonator_analysis:
             S21_complex,
             rmse,
             f_dip,
+            method,
+            notch_depth,
+            notch_base,
         ) = DCM_backend.DCM_fit(S_ij, auto_trim=auto_trim, min_points=min_points)
 
         if show or save is not None:
             f_plot = np.linspace(f.min(), f.max(), 500)
-            theta_fit = DCM_backend.angle_model(
-                f_plot, f0_fit, kappa_fit, theta0_fit, sign_fit
-            )
-            original_fit = shift + R * np.exp(1j * theta_fit)
-            y_plot = 20 * np.log10(np.abs(original_fit))
-
             f_khz = (f - f0_fit) / 1e3
             f_plot_khz = (f_plot - f0_fit) / 1e3
+
+            if method == "DCM":
+                theta_fit = DCM_backend.angle_model(
+                    f_plot, f0_fit, kappa_fit, theta0_fit, sign_fit
+                )
+                original_fit = shift + R * np.exp(1j * theta_fit)
+                y_plot = 20 * np.log10(np.abs(original_fit))
+                fit_label = "DCM fit"
+            else:
+                y_plot = DCM_backend._notch_mag_db(
+                    f_plot, f0_fit, kappa_fit, notch_depth, notch_base
+                )
+                fit_label = "magnitude fit"
 
             fig, ax = plt.subplots()
             ax.scatter(
@@ -437,7 +448,7 @@ class resonator_analysis:
                 label="simulation data",
                 color="mediumblue",
             )
-            ax.plot(f_plot_khz, y_plot, label="fit", color="crimson")
+            ax.plot(f_plot_khz, y_plot, label=fit_label, color="crimson")
             ax.set_xlabel(r"$\Delta f$ [kHz]")
             ax.set_ylabel(r"$|S_{21}|$ [dB]")
             ax.legend(fontsize=10)
@@ -455,4 +466,5 @@ class resonator_analysis:
             "kappa_kHz": kappa_fit / 1e3,
             "frequency_dip_GHz": f_dip / 1e9,
             "fit_rmse": rmse,
+            "method": method,
         }

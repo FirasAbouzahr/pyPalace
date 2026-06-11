@@ -84,6 +84,45 @@ class DCM_backend:
         return f[mask], mag_db[mask], phase_deg[mask]
 
     @staticmethod
+    def _notch_power(f: np.ndarray, f0: float, kappa: float, depth: float, base: float) -> np.ndarray:
+        return base - depth / (1 + (2 * (f - f0) / kappa) ** 2)
+
+    @staticmethod
+    def _notch_mag_db(f: np.ndarray, f0: float, kappa: float, depth: float, base: float) -> np.ndarray:
+        power = DCM_backend._notch_power(f, f0, kappa, depth, base)
+        return 10 * np.log10(np.maximum(power, 1e-30))
+
+    @staticmethod
+    def _fit_magnitude_notch(
+        f: np.ndarray, mag_db: np.ndarray
+    ) -> tuple[float, float, float, float, float, float]:
+        """Lorentzian notch fit in linear power when the DCM phase arc is too short."""
+        power = 10 ** (mag_db / 10.0)
+        f0_guess = float(f[int(np.argmin(mag_db))])
+        kappa_guess = DCM_backend._kappa_guess_from_mag(f, mag_db)
+        n_edge = max(2, len(power) // 10)
+        base_guess = float(np.median(np.r_[power[:n_edge], power[-n_edge:]]))
+        depth_guess = float(max(base_guess - power.min(), 1e-30))
+        f_span = float(f[-1] - f[0])
+        df_min = float(np.min(np.diff(f))) if len(f) > 1 else 1e6
+
+        popt, _ = curve_fit(
+            DCM_backend._notch_power,
+            f,
+            power,
+            p0=[f0_guess, kappa_guess, depth_guess, base_guess],
+            bounds=(
+                [float(f[0]), df_min, 0.0, 0.0],
+                [float(f[-1]), max(f_span * 10.0, df_min * 10.0), base_guess * 2.0, base_guess * 2.0],
+            ),
+            maxfev=10000,
+        )
+        f0_fit, kappa_fit, depth_fit, base_fit = map(float, popt)
+        pred = DCM_backend._notch_power(f, f0_fit, kappa_fit, depth_fit, base_fit)
+        rmse = float(np.sqrt(np.mean((pred - power) ** 2)))
+        return f0_fit, kappa_fit, depth_fit, base_fit, rmse
+
+    @staticmethod
     def _fit_phase_arc(
         f: np.ndarray, phi: np.ndarray, mag_db: np.ndarray
     ) -> tuple[float, float, float, float, float]:
@@ -194,6 +233,7 @@ class DCM_backend:
             )
 
         S21_complex = (10 ** (mag_db / 20.0)) * np.exp(1j * np.deg2rad(phase_deg))
+        f_dip = float(f[int(np.argmin(mag_db))])
 
         a, b, R = DCM_backend.fit_to_circle(S21_complex.real, S21_complex.imag)
         if R <= 0 or not np.isfinite(R):
@@ -202,11 +242,35 @@ class DCM_backend:
         shift = a + 1j * b
         S21_norm = (S21_complex - shift) / R
         phi = np.unwrap(np.arctan2(S21_norm.imag, S21_norm.real))
+        phi_span = float(np.ptp(phi))
 
-        f0_fit, kappa_fit, theta0_fit, sign_fit, rmse = DCM_backend._fit_phase_arc(
-            f, phi, mag_db
-        )
-        DCM_backend._validate_fit(f, mag_db, f0_fit, kappa_fit, rmse, phi)
+        method = "DCM"
+        notch_depth = np.nan
+        notch_base = np.nan
+        theta0_fit = 0.0
+        sign_fit = 1.0
+
+        use_dcm = phi_span >= 0.5
+        if use_dcm:
+            try:
+                f0_fit, kappa_fit, theta0_fit, sign_fit, rmse = DCM_backend._fit_phase_arc(
+                    f, phi, mag_db
+                )
+                DCM_backend._validate_fit(f, mag_db, f0_fit, kappa_fit, rmse, phi)
+            except (RuntimeError, ValueError):
+                use_dcm = False
+
+        if not use_dcm:
+            method = "magnitude"
+            f0_fit, kappa_fit, notch_depth, notch_base, rmse = DCM_backend._fit_magnitude_notch(
+                f, mag_db
+            )
+            q_loaded = f0_fit / kappa_fit if kappa_fit > 0 else 0.0
+            if kappa_fit <= 0 or q_loaded < 10:
+                raise ValueError(
+                    f"Resonator fit failed: kappa={kappa_fit/1e3:.3f} kHz "
+                    f"(Q_loaded={q_loaded:.1f})."
+                )
 
         return (
             f0_fit,
@@ -218,5 +282,8 @@ class DCM_backend:
             f,
             S21_complex,
             rmse,
-            float(f[int(np.argmin(mag_db))]),
+            f_dip,
+            method,
+            notch_depth,
+            notch_base,
         )
