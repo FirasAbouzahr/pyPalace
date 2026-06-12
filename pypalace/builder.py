@@ -161,48 +161,35 @@ class Boundaries:
         return dict,"Terminal"
         
     @staticmethod
-    def LumpedPort(
-        Index,
-        Attributes=None,
-        Direction=None,
-        CoordinateSystem=None,
-        Excitation=None,
-        Active=None,
-        R=None,
-        L=None,
-        C=None,
-        Rs=None,
-        Ls=None,
-        Cs=None,
-        Elements=None,
-    ):
+    def LumpedPort(Index,Attributes,Direction,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
+    
         if (R != None or L != None or C != None) and (Rs != None or Ls != None or Cs != None):
             raise ValueError("Cannot combine both circuit (R,L,C) and surface (Rs,Ls,Cs) parameters")
-
+            
         if Direction != None and Elements != None:
             raise ValueError("Cannot use both Direction and Elements, set Direction=None to use Elements.")
 
-        if Elements is not None:
-            dict = {"Index": Index}
+        if Elements != None:
+            dict = {"Index":Index}
         else:
-            dict = {"Index": Index, "Attributes": Attributes, "Direction": Direction}
+            dict = {"Index":Index,
+                    "Attributes":Attributes,
+                    "Direction":Direction}
 
-        for key, val in (
-            ("CoordinateSystem", CoordinateSystem),
-            ("Excitation", Excitation),
-            ("Active", Active),
-            ("R", R),
-            ("L", L),
-            ("C", C),
-            ("Rs", Rs),
-            ("Ls", Ls),
-            ("Cs", Cs),
-            ("Elements", Elements),
-        ):
-            if val is not None:
-                dict[key] = val
+        LP_list = np.array([CoordinateSystem,Excitation,Active,R,L,C,Rs,Ls,Cs])
+        LP_labels = np.array(["CoordinateSystem","Excitation","Active","R","L","C","Rs","Ls","Cs"])
+        LP_mask = LP_list[:,] == None
 
-        return dict, "LumpedPort"
+        LP_list = LP_list[~LP_mask]
+        LP_labels = LP_labels[~LP_mask]
+
+        for i in range(len(LP_list)):
+            dict[LP_labels[i]] = LP_list[i]
+
+        if Elements != None:
+            dict["Elements"] = Elements
+
+        return dict,"LumpedPort"
     
     @staticmethod
     def Elements(Attributes,Direction,CoordinateSystem):
