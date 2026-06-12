@@ -362,63 +362,101 @@ class LOM:
         return np.pi / (m * wr * Zc)
 
 class resonator_analysis:
-    
-    def get_resonator_parameters_driven(S_ij,show=False,save=None):
 
+    @staticmethod
+    def get_resonator_parameters_driven(
+        S_ij,
+        show: bool = False,
+        save: str | None = None,
+        *,
+        auto_trim: bool = True,
+        min_points: int = 8,
+    ):
         """
-        Extracts f_r and kappa from a frequency-domain driven simulation of a superconducting resonator.
+        Extract f_r and kappa from a driven resonator S-parameter sweep.
 
-        Fit complex S21 data via the Diameter Correction Method (DCM)
+        Fits complex S21 via the Diameter Correction Method (DCM). For reliable
+        results, ``S_ij`` should span a narrow band around the resonance with
+        enough points through the linewidth (see Example 03).
 
         Parameters
         ----------
         S_ij : pandas.DataFrame
-            DataFrame containing frequency, magnitude (dB), and phase (degrees). Otained from pypalace.Simulation.get_Sij.
-        
+            Frequency (GHz), |S| (dB), and arg(S) (deg) from
+            :meth:`~pypalace.simulation.Simulation.get_Sij`.
         show : bool, optional
-            If True (default), display the S21 plot.
-
+            If True, plot |S21| data and the DCM fit.
         save : str or None, optional
-            If provided, save the plot to the specified file path
-            If None (default), the plot is not saved.
-        
+            If set, save the plot to this path.
+        auto_trim : bool, optional
+            If True (default), keep only frequencies near the |S21| dip before
+            fitting. Helps when a wide coarse sweep is passed accidentally.
+        min_points : int, optional
+            Minimum number of points required after trimming.
+
         Returns
         -------
-        dictionary
-            DataFrame containing frequency, magnitude (dB), and phase (degrees).
+        dict
+            ``frequency_GHz``, ``kappa_kHz``, ``frequency_dip_GHz``,
+            ``fit_rmse`` (IQ residual), and ``fit_rmse_db`` (|S21| residual).
 
         Raises
         ------
         ValueError
-            If the simulation type is not driven or if the specified port indices are invalid.
+            If the data are invalid or the fit fails sanity checks.
+        RuntimeError
+            If the nonlinear fit does not converge.
         """
-        
-        f0_fit, kappa_fit, theta0_fit, sign_fit, shift, R, f, S21_complex = DCM_backend.DCM_fit(S_ij)
-        
-        if show == True or save != None:
-            f_plot = np.linspace(f.min(),f.max(),500)
-            theta_fit = DCM_backend.angle_model(f_plot, f0_fit, kappa_fit, theta0_fit, sign_fit)
-            unit_fit = np.exp(1j * theta_fit)
-            original_fit = shift + R * unit_fit
-            
-            y_plot = 20*np.log10(np.abs(original_fit))
-            trough_loc = np.where(y_plot == y_plot.min())
-            freq_center = f_plot[trough_loc[0][0]]
-            
-            f = (f - freq_center)/1e3
-            f_plot = (f_plot - freq_center)/1e3
+        (
+            f0_fit,
+            kappa_fit,
+            theta0_fit,
+            sign_fit,
+            shift,
+            R,
+            f,
+            S21_complex,
+            rmse,
+            f_dip,
+            rmse_db,
+        ) = DCM_backend.DCM_fit(S_ij, auto_trim=auto_trim, min_points=min_points)
 
-            fig,ax = plt.subplots()
-            plt.scatter(f,20*np.log10(np.abs(S21_complex)),label="simulation data",color="mediumblue")
-            plt.plot(f_plot,y_plot,label="fit",color="crimson")
-            plt.xlabel(r"$\Delta$ [kHz]")
-            plt.ylabel(r"$||S_{21}||$ [dB]")
-            plt.legend(fontsize = 10)
-            
-            if save != None:
-                plt.savefig(save)
-                
-            if show == True:
+        if show or save is not None:
+            f_plot = np.linspace(f.min(), f.max(), 500)
+            f_khz = (f - f0_fit) / 1e3
+            f_plot_khz = (f_plot - f0_fit) / 1e3
+
+            ax_fit = shift.real
+            ay_fit = shift.imag
+            pred = DCM_backend._dcm_complex_model(
+                f_plot, ax_fit, ay_fit, R, f0_fit, kappa_fit, theta0_fit, sign_fit
+            )
+            y_plot = 20 * np.log10(np.maximum(np.abs(pred), 1e-30))
+
+            fig, ax = plt.subplots()
+            ax.scatter(
+                f_khz,
+                20 * np.log10(np.abs(S21_complex)),
+                label="simulation data",
+                color="mediumblue",
+            )
+            ax.plot(f_plot_khz, y_plot, label="DCM fit", color="crimson")
+            ax.set_xlabel(r"$\Delta f$ [kHz]")
+            ax.set_ylabel(r"$|S_{21}|$ [dB]")
+            ax.legend(fontsize=10)
+
+            if save is not None:
+                fig.savefig(save)
+
+            if show:
                 plt.show()
-            
-        return {"frequency_GHz":f0_fit/1e9,"kappa_kHz":kappa_fit/1e3}
+            else:
+                plt.close(fig)
+
+        return {
+            "frequency_GHz": f0_fit / 1e9,
+            "kappa_kHz": kappa_fit / 1e3,
+            "frequency_dip_GHz": f_dip / 1e9,
+            "fit_rmse": rmse,
+            "fit_rmse_db": rmse_db,
+        }
