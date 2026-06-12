@@ -192,10 +192,13 @@ class Boundaries:
         return dict,"LumpedPort"
     
     @staticmethod
-    def Elements(Attributes,Direction,CoordinateSystem):
+    def Elements(Attributes,Direction,CoordinateSystem=None):
         if type(Attributes) != list:
             Attributes = [Attributes]
-        return {"Attributes":Attributes,"Direction":Direction,"CoordinateSystem":CoordinateSystem}
+        dict = {"Attributes":Attributes,"Direction":Direction}
+        if type(Direction) == list and CoordinateSystem != None:
+            dict["CoordinateSystem"] = CoordinateSystem
+        return dict
     
     @staticmethod
     def WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None):
