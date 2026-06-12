@@ -424,6 +424,8 @@ class Mesh:
         substrate_thickness: float = 0.5,
         airbox_height: float = 0.5,
         margin: float = 0.5,
+        margin_x: float | None = None,
+        margin_y: float | None = None,
         volume_mesh_size: float = 0.1,
         surface_mesh_size: float = 0.005,
         refinement_radius: float = 0.05,
@@ -448,8 +450,14 @@ class Mesh:
             ``"name"`` or ``("component", "name")`` for an exact row. Rows not in
             this mapping are still imprinted, but receive no explicit surface
             physical group.
-        substrate_thickness, airbox_height, margin:
+        substrate_thickness, airbox_height:
             Geometry lengths in the design's units. Qiskit Metal defaults to mm.
+        margin:
+            Padding added to the layout bounding box on all sides when
+            ``margin_x`` and ``margin_y`` are not set.
+        margin_x, margin_y:
+            Padding in x and y added to the layout bounding box before building
+            the substrate and air box. Default to ``margin`` when omitted.
         volume_mesh_size:
             Bulk mesh target in design units.
         surface_mesh_size:
@@ -545,17 +553,24 @@ class Mesh:
         output_path = Path(output_mesh)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        if margin_x == None:
+            margin_x = margin
+        if margin_y == None:
+            margin_y = margin
+
         (
             substrate_thickness,
             airbox_height,
-            margin,
+            margin_x,
+            margin_y,
             volume_mesh_size,
             surface_mesh_size,
             refinement_radius,
         ) = (
             substrate_thickness * mesh_scale,
             airbox_height * mesh_scale,
-            margin * mesh_scale,
+            margin_x * mesh_scale,
+            margin_y * mesh_scale,
             volume_mesh_size * mesh_scale,
             surface_mesh_size * mesh_scale,
             refinement_radius * mesh_scale,
@@ -646,10 +661,10 @@ class Mesh:
 
         bbox_geom = unary_union([record["polygon"] for record in records])
         xmin, ymin, xmax, ymax = bbox_geom.bounds
-        xmin -= margin
-        ymin -= margin
-        xmax += margin
-        ymax += margin
+        xmin -= margin_x
+        ymin -= margin_y
+        xmax += margin_x
+        ymax += margin_y
         dx = xmax - xmin
         dy = ymax - ymin
         z_substrate_bottom = -substrate_thickness
