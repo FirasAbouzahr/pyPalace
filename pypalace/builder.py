@@ -193,6 +193,8 @@ class Boundaries:
     
     @staticmethod
     def Elements(Attributes,Direction,CoordinateSystem):
+        if type(Attributes) != list:
+            Attributes = [Attributes]
         return {"Attributes":Attributes,"Direction":Direction,"CoordinateSystem":CoordinateSystem}
     
     @staticmethod
