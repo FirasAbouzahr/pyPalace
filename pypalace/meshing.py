@@ -298,6 +298,78 @@ class Mesh:
         return out
 
     @staticmethod
+    def _triangle_area_2d(tri: np.ndarray) -> float:
+        a, b, c = tri
+        return 0.5 * abs(
+            (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+        )
+
+    @staticmethod
+    def _label_anchor_for_polys(polys: list[np.ndarray]) -> np.ndarray:
+        """Anchor labels on the largest face in a physical group."""
+        areas = [Mesh._triangle_area_2d(tri) for tri in polys]
+        return polys[int(np.argmax(areas))].mean(axis=0)
+
+    @staticmethod
+    def _spread_label_positions(
+        anchors: np.ndarray,
+        texts: list[str],
+        xspan: float,
+        yspan: float,
+        fontsize: float = 8,
+        n_iter: int = 120,
+    ) -> np.ndarray:
+        """Separate overlapping label positions while staying near their anchors."""
+        n = len(texts)
+        if n <= 1:
+            return anchors.copy()
+
+        pos = anchors.astype(float).copy()
+        anchors = pos.copy()
+        span = max(xspan, yspan, 1e-9)
+
+        char_w = span * 0.011 * (fontsize / 8.0)
+        char_h = span * 0.028 * (fontsize / 8.0)
+        half_sizes = np.array([[0.5 * len(t) * char_w, 0.5 * char_h] for t in texts])
+
+        max_drift = 0.35 * span
+
+        for _ in range(n_iter):
+            for i in range(n):
+                for j in range(i + 1, n):
+                    dx = pos[j, 0] - pos[i, 0]
+                    dy = pos[j, 1] - pos[i, 1]
+                    sep_x = half_sizes[i, 0] + half_sizes[j, 0] + 0.02 * span
+                    sep_y = half_sizes[i, 1] + half_sizes[j, 1] + 0.01 * span
+                    overlap_x = sep_x - abs(dx)
+                    overlap_y = sep_y - abs(dy)
+                    if overlap_x > 0 and overlap_y > 0:
+                        if overlap_x <= overlap_y:
+                            sign = 1.0 if dx >= 0 else -1.0
+                            if dx == 0:
+                                sign = 1.0 if j > i else -1.0
+                            shift = 0.55 * overlap_x * sign
+                            pos[i, 0] -= shift
+                            pos[j, 0] += shift
+                        else:
+                            sign = 1.0 if dy >= 0 else -1.0
+                            if dy == 0:
+                                sign = 1.0 if j > i else -1.0
+                            shift = 0.55 * overlap_y * sign
+                            pos[i, 1] -= shift
+                            pos[j, 1] += shift
+
+            drift = pos - anchors
+            dist = np.linalg.norm(drift, axis=1)
+            over = dist > max_drift
+            if np.any(over):
+                pos[over] = anchors[over] + drift[over] * (max_drift / dist[over, None])
+
+            pos += 0.12 * (anchors - pos)
+
+        return pos
+
+    @staticmethod
     def plot_mesh(
         meshfile,
         labeling=False,
@@ -371,6 +443,7 @@ class Mesh:
         fig, ax = plt.subplots()
         cmap = plt.get_cmap("tab10")
         phys_ids = sorted(groups.keys())
+        label_specs: list[tuple[np.ndarray, str]] = []
 
         for idx, phys in enumerate(phys_ids):
             polys = groups[phys]
@@ -386,20 +459,60 @@ class Mesh:
             )
 
             if labeling == True:
-                centroid = np.mean(np.vstack([tri.mean(axis=0) for tri in polys]), axis=0)
+                anchor = Mesh._label_anchor_for_polys(polys)
                 label = id_to_name.get(str(phys), f"ID {phys}")
-                ax.text(
-                    centroid[0],
-                    centroid[1],
-                    label,
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color="black",
-                    clip_on=True,
-                )
+                label_specs.append((anchor, label))
 
         all_pts = np.vstack([tri[:, [i_ax, j_ax]] for _, tri in sliced])
+        xspan = float(all_pts[:, 0].max() - all_pts[:, 0].min())
+        yspan = float(all_pts[:, 1].max() - all_pts[:, 1].min())
+
+        if labeling == True and label_specs:
+            anchors = np.asarray([anchor for anchor, _ in label_specs])
+            texts = [text for _, text in label_specs]
+            positions = Mesh._spread_label_positions(
+                anchors, texts, xspan, yspan
+            )
+            label_bbox = dict(
+                boxstyle="round,pad=0.2",
+                facecolor="white",
+                edgecolor="0.8",
+                alpha=0.85,
+                linewidth=0.5,
+            )
+            for (anchor, text), pos in zip(label_specs, positions):
+                moved = np.linalg.norm(pos - anchor) > 0.02 * max(xspan, yspan)
+                if moved:
+                    ax.annotate(
+                        text,
+                        xy=anchor,
+                        xytext=pos,
+                        fontsize=8,
+                        ha="center",
+                        va="center",
+                        color="black",
+                        clip_on=True,
+                        arrowprops=dict(
+                            arrowstyle="-",
+                            color="0.45",
+                            lw=0.6,
+                            shrinkA=0,
+                            shrinkB=3,
+                        ),
+                        bbox=label_bbox,
+                    )
+                else:
+                    ax.text(
+                        pos[0],
+                        pos[1],
+                        text,
+                        ha="center",
+                        va="center",
+                        fontsize=8,
+                        color="black",
+                        clip_on=True,
+                        bbox=label_bbox,
+                    )
         ax.set_xlim(all_pts[:, 0].min(), all_pts[:, 0].max())
         ax.set_ylim(all_pts[:, 1].min(), all_pts[:, 1].max())
         ax.set_aspect("equal", adjustable="box")
