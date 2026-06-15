@@ -313,47 +313,94 @@ class Mesh:
         return polys[int(np.argmax(areas))].mean(axis=0)
 
     @staticmethod
-    def _external_label_position(
+    def _ray_extent_from_point(
+        px: float,
+        py: float,
+        ux: float,
+        uy: float,
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+    ) -> float:
+        """Distance from a point to the plot boundary along a unit direction."""
+        t_candidates = []
+        if ux > 1e-12:
+            t_candidates.append((xmax - px) / ux)
+        elif ux < -1e-12:
+            t_candidates.append((xmin - px) / ux)
+        if uy > 1e-12:
+            t_candidates.append((ymax - py) / uy)
+        elif uy < -1e-12:
+            t_candidates.append((ymin - py) / uy)
+        if not t_candidates:
+            return max(xmax - xmin, ymax - ymin)
+        return min(t for t in t_candidates if t > 1e-9)
+
+    @staticmethod
+    def _callout_label_position(
         anchor: np.ndarray,
         center: np.ndarray,
         xmin: float,
         xmax: float,
         ymin: float,
         ymax: float,
-        pad_frac: float = 0.10,
     ) -> np.ndarray:
-        """Place a label in the plot margin, outward from the mesh center."""
+        """Place a callout label inside the mesh bounds, away from its anchor."""
         span = max(xmax - xmin, ymax - ymin, 1e-9)
-        pad = pad_frac * span
-        xmin_p, xmax_p = xmin - pad, xmax + pad
-        ymin_p, ymax_p = ymin - pad, ymax + pad
+        inset = 0.035 * span
 
         cx, cy = float(center[0]), float(center[1])
         ax, ay = float(anchor[0]), float(anchor[1])
         dx, dy = ax - cx, ay - cy
         norm = float(np.hypot(dx, dy))
-        if norm < 1e-9 * span:
-            dx, dy = 0.0, 1.0
+        if norm < 0.05 * span:
+            dy = 1.0 if ay >= cy else -1.0
+            dx = 0.0
             norm = 1.0
         ux, uy = dx / norm, dy / norm
 
-        t_candidates = []
-        if ux > 1e-12:
-            t_candidates.append((xmax_p - ax) / ux)
-        elif ux < -1e-12:
-            t_candidates.append((xmin_p - ax) / ux)
-        if uy > 1e-12:
-            t_candidates.append((ymax_p - ay) / uy)
-        elif uy < -1e-12:
-            t_candidates.append((ymin_p - ay) / uy)
+        t_edge = Mesh._ray_extent_from_point(ax, ay, ux, uy, xmin, xmax, ymin, ymax)
+        offset = float(np.clip(0.22 * t_edge, 0.10 * span, 0.28 * t_edge))
+        pos = np.array([ax + ux * offset, ay + uy * offset])
+        pos[0] = np.clip(pos[0], xmin + inset, xmax - inset)
+        pos[1] = np.clip(pos[1], ymin + inset, ymax - inset)
+        return pos
 
-        if not t_candidates:
-            return anchor + np.array([0.0, 0.15 * span])
+    @staticmethod
+    def _initial_callout_positions(
+        anchors: np.ndarray,
+        center: np.ndarray,
+        bounds: tuple[float, float, float, float],
+    ) -> np.ndarray:
+        """Build starting callout positions, fanning out labels near the mesh center."""
+        xmin, xmax, ymin, ymax = bounds
+        span = max(xmax - xmin, ymax - ymin, 1e-9)
+        inset = 0.035 * span
+        xmin_i, xmax_i = xmin + inset, xmax - inset
+        ymin_i, ymax_i = ymin + inset, ymax - inset
 
-        t_out = min(t for t in t_candidates if t > 1e-9)
-        inset = 0.03 * span
-        t_out = max(t_out - inset, 0.08 * span)
-        return np.array([ax + ux * t_out, ay + uy * t_out])
+        positions = np.asarray(
+            [
+                Mesh._callout_label_position(anchor, center, xmin, xmax, ymin, ymax)
+                for anchor in anchors
+            ],
+            dtype=float,
+        )
+
+        center_dists = np.linalg.norm(anchors - center, axis=1)
+        near_idx = np.flatnonzero(center_dists < 0.15 * span)
+        if len(near_idx) > 1:
+            angles = np.linspace(np.pi / 4.0, 3.0 * np.pi / 4.0, len(near_idx))
+            offset = 0.16 * span
+            for k, idx in enumerate(near_idx):
+                positions[idx] = anchors[idx] + offset * np.array(
+                    [np.cos(angles[k]), np.sin(angles[k])]
+                )
+
+        positions[:, 0] = np.clip(positions[:, 0], xmin_i, xmax_i)
+        positions[:, 1] = np.clip(positions[:, 1], ymin_i, ymax_i)
+        return positions
 
     @staticmethod
     def _spread_label_positions(
@@ -361,56 +408,73 @@ class Mesh:
         texts: list[str],
         xspan: float,
         yspan: float,
+        bounds: tuple[float, float, float, float],
         fontsize: float = 8,
-        n_iter: int = 120,
+        n_iter: int = 160,
     ) -> np.ndarray:
-        """Separate overlapping label positions while staying near their starts."""
+        """Separate labels that are too close, keeping them inside the mesh bounds."""
         n = len(texts)
+        xmin, xmax, ymin, ymax = bounds
         if n <= 1:
             return initial.copy()
 
+        span = max(xspan, yspan, 1e-9)
+        inset = 0.035 * span
+        xmin_i, xmax_i = xmin + inset, xmax - inset
+        ymin_i, ymax_i = ymin + inset, ymax - inset
+
         pos = initial.astype(float).copy()
         preferred = pos.copy()
-        span = max(xspan, yspan, 1e-9)
 
         char_w = span * 0.011 * (fontsize / 8.0)
         char_h = span * 0.028 * (fontsize / 8.0)
         half_sizes = np.array([[0.5 * len(t) * char_w, 0.5 * char_h] for t in texts])
 
-        max_drift = 0.25 * span
+        def clip_positions(points: np.ndarray) -> np.ndarray:
+            points[:, 0] = np.clip(points[:, 0], xmin_i, xmax_i)
+            points[:, 1] = np.clip(points[:, 1], ymin_i, ymax_i)
+            return points
+
+        max_drift = 0.30 * span
 
         for _ in range(n_iter):
             for i in range(n):
                 for j in range(i + 1, n):
                     dx = pos[j, 0] - pos[i, 0]
                     dy = pos[j, 1] - pos[i, 1]
-                    sep_x = half_sizes[i, 0] + half_sizes[j, 0] + 0.02 * span
-                    sep_y = half_sizes[i, 1] + half_sizes[j, 1] + 0.01 * span
-                    overlap_x = sep_x - abs(dx)
-                    overlap_y = sep_y - abs(dy)
-                    if overlap_x > 0 and overlap_y > 0:
-                        if overlap_x <= overlap_y:
-                            sign = 1.0 if dx >= 0 else -1.0
-                            if dx == 0:
-                                sign = 1.0 if j > i else -1.0
-                            shift = 0.55 * overlap_x * sign
-                            pos[i, 0] -= shift
-                            pos[j, 0] += shift
-                        else:
-                            sign = 1.0 if dy >= 0 else -1.0
-                            if dy == 0:
-                                sign = 1.0 if j > i else -1.0
-                            shift = 0.55 * overlap_y * sign
-                            pos[i, 1] -= shift
-                            pos[j, 1] += shift
+                    dist = float(np.hypot(dx, dy))
+                    min_dist = float(
+                        np.hypot(
+                            half_sizes[i, 0] + half_sizes[j, 0],
+                            half_sizes[i, 1] + half_sizes[j, 1],
+                        )
+                        + 0.04 * span
+                    )
+                    if dist >= min_dist:
+                        continue
+
+                    if dist > 1e-9:
+                        push = 0.70 * (min_dist - dist) / 2.0
+                        pos[i, 0] -= push * dx / dist
+                        pos[i, 1] -= push * dy / dist
+                        pos[j, 0] += push * dx / dist
+                        pos[j, 1] += push * dy / dist
+                    else:
+                        push = 0.70 * min_dist / 2.0
+                        sign = 1.0 if j > i else -1.0
+                        pos[i, 1] -= push * sign
+                        pos[j, 1] += push * sign
 
             drift = pos - preferred
-            dist = np.linalg.norm(drift, axis=1)
-            over = dist > max_drift
+            drift_dist = np.linalg.norm(drift, axis=1)
+            over = drift_dist > max_drift
             if np.any(over):
-                pos[over] = preferred[over] + drift[over] * (max_drift / dist[over, None])
+                pos[over] = preferred[over] + drift[over] * (
+                    max_drift / drift_dist[over, None]
+                )
 
-            pos += 0.12 * (preferred - pos)
+            pos += 0.08 * (preferred - pos)
+            clip_positions(pos)
 
         return pos
 
@@ -521,17 +585,12 @@ class Mesh:
         mesh_center = all_pts.mean(axis=0)
 
         if labeling == True and label_specs:
-            external = np.asarray(
-                [
-                    Mesh._external_label_position(
-                        anchor, mesh_center, xmin, xmax, ymin, ymax
-                    )
-                    for anchor, _ in label_specs
-                ]
-            )
+            bounds = (xmin, xmax, ymin, ymax)
+            anchors = np.asarray([anchor for anchor, _ in label_specs])
+            callouts = Mesh._initial_callout_positions(anchors, mesh_center, bounds)
             texts = [text for _, text in label_specs]
             positions = Mesh._spread_label_positions(
-                external, texts, xspan, yspan
+                callouts, texts, xspan, yspan, bounds
             )
             label_bbox = dict(
                 boxstyle="round,pad=0.2",
@@ -560,13 +619,6 @@ class Mesh:
                     arrowprops=arrowprops,
                     bbox=label_bbox,
                 )
-
-            label_pts = np.vstack([positions, [a for a, _ in label_specs]])
-            pad = 0.04 * max(xspan, yspan)
-            xmin = min(xmin, float(label_pts[:, 0].min()) - pad)
-            xmax = max(xmax, float(label_pts[:, 0].max()) + pad)
-            ymin = min(ymin, float(label_pts[:, 1].min()) - pad)
-            ymax = max(ymax, float(label_pts[:, 1].max()) + pad)
 
         ax.set_xlim(xmin, xmax)
         ax.set_ylim(ymin, ymax)
