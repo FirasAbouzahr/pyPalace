@@ -114,6 +114,306 @@ class Mesh:
             
         return pd.DataFrame(attributes_dict,index = None)
 
+    @staticmethod
+    def _mesh_filetype(filename: str | Path) -> str:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in (".msh", ".bdf"):
+            raise ValueError('mesh file must end in ".msh" or ".bdf"')
+        return suffix
+
+    @staticmethod
+    def _plane_axes(normal: str) -> tuple[int, int]:
+        if normal == "z":
+            return 0, 1
+        if normal == "y":
+            return 0, 2
+        if normal == "x":
+            return 1, 2
+        raise ValueError("normal must be 'x', 'y', or 'z'")
+
+    @staticmethod
+    def _split_bdf_xy_token(token: str) -> tuple[float, float]:
+        if len(token) < 2:
+            raise ValueError(f"could not parse BDF coordinate token {token!r}")
+        for split in range(1, len(token)):
+            if token[split] not in ".-+eE":
+                continue
+            try:
+                return float(token[:split]), float(token[split:])
+            except ValueError:
+                continue
+        raise ValueError(f"could not parse BDF coordinate token {token!r}")
+
+    @staticmethod
+    def _read_msh_for_plot(filename: str | Path):
+        nodes: dict[int, tuple[float, float, float]] = {}
+        tris: list[tuple[int, tuple[int, int, int]]] = []
+        tets: list[tuple[int, tuple[int, int, int, int]]] = []
+
+        section = None
+        n_expected = 0
+        n_read = 0
+
+        with open(filename, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("$"):
+                    if line == "$Nodes":
+                        section = "nodes"
+                        n_read = 0
+                        n_expected = 0
+                    elif line == "$Elements":
+                        section = "elements"
+                        n_read = 0
+                        n_expected = 0
+                    elif line.startswith("$End"):
+                        section = None
+                    continue
+
+                if section == "nodes":
+                    if n_expected == 0:
+                        n_expected = int(line)
+                        continue
+                    parts = line.split()
+                    nid = int(parts[0])
+                    nodes[nid] = (float(parts[1]), float(parts[2]), float(parts[3]))
+                    n_read += 1
+                    if n_read >= n_expected:
+                        section = None
+
+                elif section == "elements":
+                    if n_expected == 0:
+                        n_expected = int(line)
+                        continue
+                    parts = line.split()
+                    elm_type = int(parts[1])
+                    num_tags = int(parts[2])
+                    phys = int(parts[3])
+                    node_start = 3 + num_tags
+                    node_ids = tuple(int(x) for x in parts[node_start:])
+
+                    if elm_type == 2 and len(node_ids) == 3:
+                        tris.append((phys, node_ids))
+                    elif elm_type == 4 and len(node_ids) == 4:
+                        tets.append((phys, node_ids))
+
+                    n_read += 1
+                    if n_read >= n_expected:
+                        section = None
+
+        return nodes, tris, tets
+
+    @staticmethod
+    def _read_bdf_for_plot(filename: str | Path):
+        nodes: dict[int, tuple[float, float, float]] = {}
+        tris: list[tuple[int, tuple[int, int, int]]] = []
+        tets: list[tuple[int, tuple[int, int, int, int]]] = []
+
+        pending_id = None
+        pending_xy = None
+        in_bulk = False
+
+        with open(filename, "r") as f:
+            for line in f:
+                if "BEGIN BULK" in line:
+                    in_bulk = True
+                    continue
+                if not in_bulk:
+                    continue
+
+                if line.startswith("GRID*"):
+                    parts = line.split()
+                    pending_id = int(parts[1])
+                    if len(parts) >= 5:
+                        pending_xy = (float(parts[3]), float(parts[4]))
+                    elif len(parts) == 4:
+                        pending_xy = Mesh._split_bdf_xy_token(parts[3])
+                    else:
+                        pending_id = None
+                        pending_xy = None
+
+                elif line.startswith("*") and pending_id != None:
+                    z = float(line.split()[1])
+                    nodes[pending_id] = (pending_xy[0], pending_xy[1], z)
+                    pending_id = None
+                    pending_xy = None
+
+                elif line.startswith("CTRIA3"):
+                    parts = line.split()
+                    pid = int(parts[2])
+                    tri = (int(parts[3]), int(parts[4]), int(parts[5]))
+                    tris.append((pid, tri))
+
+                elif line.startswith("CTETRA"):
+                    parts = line.split()
+                    pid = int(parts[2])
+                    tet = tuple(int(parts[i]) for i in range(3, 7))
+                    tets.append((pid, tet))
+
+        return nodes, tris, tets
+
+    @staticmethod
+    def _triangles_on_plane(
+        nodes: dict[int, tuple[float, float, float]],
+        tris: list[tuple[int, tuple[int, int, int]]],
+        tets: list[tuple[int, tuple[int, int, int, int]]],
+        normal: str,
+        origin: tuple[float, float, float],
+        tol: float,
+    ) -> list[tuple[int, np.ndarray]]:
+        axis = {"x": 0, "y": 1, "z": 2}[normal]
+        origin_val = float(origin[axis])
+        out: list[tuple[int, np.ndarray]] = []
+
+        def on_plane(nid: int) -> bool:
+            return abs(nodes[nid][axis] - origin_val) <= tol
+
+        def add_tri(phys: int, nids: tuple[int, int, int]):
+            if not (on_plane(nids[0]) and on_plane(nids[1]) and on_plane(nids[2])):
+                return
+            out.append(
+                (
+                    phys,
+                    np.asarray(
+                        [nodes[nids[0]], nodes[nids[1]], nodes[nids[2]]], dtype=float
+                    ),
+                )
+            )
+
+        for phys, nids in tris:
+            add_tri(phys, nids)
+
+        tet_faces = (
+            (0, 1, 2),
+            (0, 1, 3),
+            (0, 2, 3),
+            (1, 2, 3),
+        )
+        for phys, nids in tets:
+            for face in tet_faces:
+                add_tri(phys, (nids[face[0]], nids[face[1]], nids[face[2]]))
+
+        return out
+
+    @staticmethod
+    def plot_mesh(
+        meshfile,
+        labeling=False,
+        normal="z",
+        origin=(0, 0, 0),
+        tol=None,
+        show=True,
+        save=None,
+    ):
+        """
+        Plot a 2D cut through a Palace mesh, colored by physical attribute.
+
+        Parameters
+        ----------
+        meshfile : str or Path
+            Path to a ``.msh`` or ``.bdf`` mesh file.
+        labeling : bool, optional
+            If True, annotate each physical group with its mesh attribute name.
+        normal : str, optional
+            Normal of the cut plane. One of ``"x"``, ``"y"``, or ``"z"``.
+            Default is ``"z"`` (xy view at the metal layer).
+        origin : tuple, optional
+            Point on the cut plane. Default is ``(0, 0, 0)``.
+        tol : float or None, optional
+            Distance from the plane within which elements are included.
+            Default is ``1e-3`` times the mesh bounding-box span.
+        show : bool, optional
+            If True (default), display the plot.
+        save : str or None, optional
+            If set, save the figure to this path.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.collections import PolyCollection
+
+        meshfile = Path(meshfile)
+        filetype = Mesh._mesh_filetype(meshfile)
+
+        if filetype == ".msh":
+            nodes, tris, tets = Mesh._read_msh_for_plot(meshfile)
+        else:
+            nodes, tris, tets = Mesh._read_bdf_for_plot(meshfile)
+
+        if not nodes:
+            raise ValueError(f"No nodes found in mesh file {meshfile}")
+
+        coords = np.asarray(list(nodes.values()), dtype=float)
+        span = float(np.max(coords.max(axis=0) - coords.min(axis=0)))
+        if tol == None:
+            tol = max(1e-9, 1e-3 * span)
+
+        origin = tuple(float(x) for x in origin)
+        sliced = Mesh._triangles_on_plane(nodes, tris, tets, normal, origin, tol)
+
+        if not sliced:
+            axis = {"x": 0, "y": 1, "z": 2}[normal]
+            raise ValueError(
+                f"No mesh faces found on the cut plane {normal}={origin[axis]:g} "
+                f"(tol={tol:g}). Try adjusting origin or tol."
+            )
+
+        i_ax, j_ax = Mesh._plane_axes(normal)
+        attr_df = Mesh.get_mesh_attributes(str(meshfile))
+        id_to_name = {
+            str(row.ID): str(row.Name) for _, row in attr_df.iterrows()
+        }
+
+        groups: dict[int, list[np.ndarray]] = defaultdict(list)
+        for phys, tri in sliced:
+            groups[int(phys)].append(tri[:, [i_ax, j_ax]])
+
+        fig, ax = plt.subplots()
+        cmap = plt.get_cmap("tab10")
+        phys_ids = sorted(groups.keys())
+
+        for idx, phys in enumerate(phys_ids):
+            polys = groups[phys]
+            color = cmap(idx % 10)
+            ax.add_collection(
+                PolyCollection(
+                    polys,
+                    facecolors=[color],
+                    edgecolors="0.25",
+                    linewidths=0.15,
+                    alpha=0.85,
+                )
+            )
+
+            if labeling == True:
+                centroid = np.mean(np.vstack([tri.mean(axis=0) for tri in polys]), axis=0)
+                label = id_to_name.get(str(phys), f"ID {phys}")
+                ax.text(
+                    centroid[0],
+                    centroid[1],
+                    label,
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="black",
+                    clip_on=True,
+                )
+
+        all_pts = np.vstack([tri[:, [i_ax, j_ax]] for _, tri in sliced])
+        ax.set_xlim(all_pts[:, 0].min(), all_pts[:, 0].max())
+        ax.set_ylim(all_pts[:, 1].min(), all_pts[:, 1].max())
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel(["x", "y", "z"][i_ax])
+        ax.set_ylabel(["x", "y", "z"][j_ax])
+        plane_axis = {"x": 0, "y": 1, "z": 2}[normal]
+        ax.set_title(f"Mesh cut: {normal} = {origin[plane_axis]:g}")
+
+        if save != None:
+            fig.savefig(save, bbox_inches="tight")
+        if show == True:
+            plt.show()
+        else:
+            plt.close(fig)
 
     @staticmethod
     def _parse_qmetal_length(value: Any, design: Any) -> float:
