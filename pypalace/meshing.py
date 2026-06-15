@@ -19,6 +19,8 @@ from shapely.ops import unary_union
 
 class Mesh:
     """Mesh I/O and Gmsh export helpers for Palace workflows."""
+
+    _PLOT_MESH_SKIP_LABELS = frozenset({"air", "substrate"})
     
     @staticmethod
     def get_mesh_attributes(filename: str | Path):
@@ -311,28 +313,71 @@ class Mesh:
         return polys[int(np.argmax(areas))].mean(axis=0)
 
     @staticmethod
+    def _external_label_position(
+        anchor: np.ndarray,
+        center: np.ndarray,
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+        pad_frac: float = 0.10,
+    ) -> np.ndarray:
+        """Place a label in the plot margin, outward from the mesh center."""
+        span = max(xmax - xmin, ymax - ymin, 1e-9)
+        pad = pad_frac * span
+        xmin_p, xmax_p = xmin - pad, xmax + pad
+        ymin_p, ymax_p = ymin - pad, ymax + pad
+
+        cx, cy = float(center[0]), float(center[1])
+        ax, ay = float(anchor[0]), float(anchor[1])
+        dx, dy = ax - cx, ay - cy
+        norm = float(np.hypot(dx, dy))
+        if norm < 1e-9 * span:
+            dx, dy = 0.0, 1.0
+            norm = 1.0
+        ux, uy = dx / norm, dy / norm
+
+        t_candidates = []
+        if ux > 1e-12:
+            t_candidates.append((xmax_p - ax) / ux)
+        elif ux < -1e-12:
+            t_candidates.append((xmin_p - ax) / ux)
+        if uy > 1e-12:
+            t_candidates.append((ymax_p - ay) / uy)
+        elif uy < -1e-12:
+            t_candidates.append((ymin_p - ay) / uy)
+
+        if not t_candidates:
+            return anchor + np.array([0.0, 0.15 * span])
+
+        t_out = min(t for t in t_candidates if t > 1e-9)
+        inset = 0.03 * span
+        t_out = max(t_out - inset, 0.08 * span)
+        return np.array([ax + ux * t_out, ay + uy * t_out])
+
+    @staticmethod
     def _spread_label_positions(
-        anchors: np.ndarray,
+        initial: np.ndarray,
         texts: list[str],
         xspan: float,
         yspan: float,
         fontsize: float = 8,
         n_iter: int = 120,
     ) -> np.ndarray:
-        """Separate overlapping label positions while staying near their anchors."""
+        """Separate overlapping label positions while staying near their starts."""
         n = len(texts)
         if n <= 1:
-            return anchors.copy()
+            return initial.copy()
 
-        pos = anchors.astype(float).copy()
-        anchors = pos.copy()
+        pos = initial.astype(float).copy()
+        preferred = pos.copy()
         span = max(xspan, yspan, 1e-9)
 
         char_w = span * 0.011 * (fontsize / 8.0)
         char_h = span * 0.028 * (fontsize / 8.0)
         half_sizes = np.array([[0.5 * len(t) * char_w, 0.5 * char_h] for t in texts])
 
-        max_drift = 0.35 * span
+        max_drift = 0.25 * span
 
         for _ in range(n_iter):
             for i in range(n):
@@ -359,13 +404,13 @@ class Mesh:
                             pos[i, 1] -= shift
                             pos[j, 1] += shift
 
-            drift = pos - anchors
+            drift = pos - preferred
             dist = np.linalg.norm(drift, axis=1)
             over = dist > max_drift
             if np.any(over):
-                pos[over] = anchors[over] + drift[over] * (max_drift / dist[over, None])
+                pos[over] = preferred[over] + drift[over] * (max_drift / dist[over, None])
 
-            pos += 0.12 * (anchors - pos)
+            pos += 0.12 * (preferred - pos)
 
         return pos
 
@@ -387,7 +432,8 @@ class Mesh:
         meshfile : str or Path
             Path to a ``.msh`` or ``.bdf`` mesh file.
         labeling : bool, optional
-            If True, annotate each physical group with its mesh attribute name.
+            If True, annotate selected physical groups with callout labels and
+            arrows. Volume labels ``air`` and ``substrate`` are omitted.
         normal : str, optional
             Normal of the cut plane. One of ``"x"``, ``"y"``, or ``"z"``.
             Default is ``"z"`` (xy view at the metal layer).
@@ -459,62 +505,71 @@ class Mesh:
             )
 
             if labeling == True:
-                anchor = Mesh._label_anchor_for_polys(polys)
                 label = id_to_name.get(str(phys), f"ID {phys}")
+                if label in Mesh._PLOT_MESH_SKIP_LABELS:
+                    continue
+                anchor = Mesh._label_anchor_for_polys(polys)
                 label_specs.append((anchor, label))
 
         all_pts = np.vstack([tri[:, [i_ax, j_ax]] for _, tri in sliced])
-        xspan = float(all_pts[:, 0].max() - all_pts[:, 0].min())
-        yspan = float(all_pts[:, 1].max() - all_pts[:, 1].min())
+        xmin = float(all_pts[:, 0].min())
+        xmax = float(all_pts[:, 0].max())
+        ymin = float(all_pts[:, 1].min())
+        ymax = float(all_pts[:, 1].max())
+        xspan = xmax - xmin
+        yspan = ymax - ymin
+        mesh_center = all_pts.mean(axis=0)
 
         if labeling == True and label_specs:
-            anchors = np.asarray([anchor for anchor, _ in label_specs])
+            external = np.asarray(
+                [
+                    Mesh._external_label_position(
+                        anchor, mesh_center, xmin, xmax, ymin, ymax
+                    )
+                    for anchor, _ in label_specs
+                ]
+            )
             texts = [text for _, text in label_specs]
             positions = Mesh._spread_label_positions(
-                anchors, texts, xspan, yspan
+                external, texts, xspan, yspan
             )
             label_bbox = dict(
                 boxstyle="round,pad=0.2",
                 facecolor="white",
                 edgecolor="0.8",
-                alpha=0.85,
+                alpha=0.9,
                 linewidth=0.5,
             )
+            arrowprops = dict(
+                arrowstyle="->",
+                color="0.35",
+                lw=0.8,
+                shrinkA=4,
+                shrinkB=3,
+            )
             for (anchor, text), pos in zip(label_specs, positions):
-                moved = np.linalg.norm(pos - anchor) > 0.02 * max(xspan, yspan)
-                if moved:
-                    ax.annotate(
-                        text,
-                        xy=anchor,
-                        xytext=pos,
-                        fontsize=8,
-                        ha="center",
-                        va="center",
-                        color="black",
-                        clip_on=True,
-                        arrowprops=dict(
-                            arrowstyle="-",
-                            color="0.45",
-                            lw=0.6,
-                            shrinkA=0,
-                            shrinkB=3,
-                        ),
-                        bbox=label_bbox,
-                    )
-                else:
-                    ax.text(
-                        pos[0],
-                        pos[1],
-                        text,
-                        ha="center",
-                        va="center",
-                        fontsize=8,
-                        color="black",
-                        clip_on=True,
-                        bbox=label_bbox,
-                    )
-        ax.set_xlim(all_pts[:, 0].min(), all_pts[:, 0].max())
-        ax.set_ylim(all_pts[:, 1].min(), all_pts[:, 1].max())
+                ax.annotate(
+                    text,
+                    xy=anchor,
+                    xytext=pos,
+                    fontsize=8,
+                    ha="center",
+                    va="center",
+                    color="black",
+                    clip_on=False,
+                    arrowprops=arrowprops,
+                    bbox=label_bbox,
+                )
+
+            label_pts = np.vstack([positions, [a for a, _ in label_specs]])
+            pad = 0.04 * max(xspan, yspan)
+            xmin = min(xmin, float(label_pts[:, 0].min()) - pad)
+            xmax = max(xmax, float(label_pts[:, 0].max()) + pad)
+            ymin = min(ymin, float(label_pts[:, 1].min()) - pad)
+            ymax = max(ymax, float(label_pts[:, 1].max()) + pad)
+
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel(["x", "y", "z"][i_ax])
         ax.set_ylabel(["x", "y", "z"][j_ax])
