@@ -21,6 +21,18 @@ class Mesh:
     """Mesh I/O and Gmsh export helpers for Palace workflows."""
 
     _PLOT_MESH_SKIP_LABELS = frozenset({"air", "substrate"})
+    _PLOT_MESH_COLORS = (
+        "#B8D4E8",  # pale blue
+        "#BFE3C6",  # pale green
+        "#F4B4AE",  # pale red
+        "#C9D8F0",  # soft periwinkle
+        "#D8F0E3",  # mint
+        "#F9D0C4",  # pale coral
+        "#E3D4F5",  # pale lavender
+        "#FBE7B2",  # pale gold
+        "#C6E2E9",  # ice blue
+        "#E8F5C8",  # pale lime
+    )
     
     @staticmethod
     def get_mesh_attributes(filename: str | Path):
@@ -334,8 +346,11 @@ class Mesh:
         elif uy < -1e-12:
             t_candidates.append((ymin - py) / uy)
         if not t_candidates:
-            return max(xmax - xmin, ymax - ymin)
-        return min(t for t in t_candidates if t > 1e-9)
+            return max(xmax - xmin, ymax - ymin, 1e-9) * 0.5
+        valid = [t for t in t_candidates if t > 1e-9]
+        if not valid:
+            return max(xmax - xmin, ymax - ymin, 1e-9) * 0.5
+        return min(valid)
 
     @staticmethod
     def _callout_label_position(
@@ -479,12 +494,92 @@ class Mesh:
         return pos
 
     @staticmethod
+    def _plot_mesh_component_bounds(
+        groups: dict[int, list[np.ndarray]],
+        name_to_phys: dict[str, int],
+        component: str | list[str],
+        pad_frac: float = 0.1,
+    ) -> tuple[float, float, float, float]:
+        """Bounding box for one or more mesh attribute names on the cut plane."""
+        if isinstance(component, str):
+            names = [component]
+        else:
+            names = list(component)
+
+        phys_ids: list[int] = []
+        for name in names:
+            if name not in name_to_phys:
+                known = ", ".join(sorted(name_to_phys))
+                raise ValueError(
+                    f"Unknown mesh component {name!r}. Known attributes: {known}"
+                )
+            phys_ids.append(name_to_phys[name])
+
+        pts = np.vstack(
+            [tri for pid in phys_ids for tri in groups[pid]]
+        )
+        xmin = float(pts[:, 0].min())
+        xmax = float(pts[:, 0].max())
+        ymin = float(pts[:, 1].min())
+        ymax = float(pts[:, 1].max())
+        pad = pad_frac * max(xmax - xmin, ymax - ymin, 1e-9)
+        return xmin - pad, xmax + pad, ymin - pad, ymax + pad
+
+    @staticmethod
+    def _group_in_view(
+        polys: list[np.ndarray],
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+    ) -> bool:
+        """Return True if any triangle from the group lies inside the viewport."""
+        for tri in polys:
+            inside = (
+                (tri[:, 0] >= xmin)
+                & (tri[:, 0] <= xmax)
+                & (tri[:, 1] >= ymin)
+                & (tri[:, 1] <= ymax)
+            )
+            if np.any(inside):
+                return True
+        return False
+
+    @staticmethod
+    def _plot_mesh_crop_bounds(
+        center: tuple[float, float],
+        span: float,
+        full_bounds: tuple[float, float, float, float],
+    ) -> tuple[float, float, float, float]:
+        """Square viewport centered on ``center`` with half-width ``span``."""
+        if span <= 0:
+            raise ValueError("crop span must be positive.")
+
+        cx, cy = (float(center[0]), float(center[1]))
+        half = float(span)
+        xmin, xmax, ymin, ymax = (
+            cx - half,
+            cx + half,
+            cy - half,
+            cy + half,
+        )
+        fxmin, fxmax, fymin, fymax = full_bounds
+        return (
+            max(xmin, fxmin),
+            min(xmax, fxmax),
+            max(ymin, fymin),
+            min(ymax, fymax),
+        )
+
+    @staticmethod
     def plot_mesh(
         meshfile,
         labeling=False,
         normal="z",
         origin=(0, 0, 0),
         tol=None,
+        zoom_to_component=None,
+        crop=None,
         show=True,
         save=None,
     ):
@@ -506,6 +601,13 @@ class Mesh:
         tol : float or None, optional
             Distance from the plane within which elements are included.
             Default is ``1e-3`` times the mesh bounding-box span.
+        zoom_to_component : str or list of str, optional
+            Crop the view to the bounding box of one or more mesh attribute
+            names, with a small padding margin.
+        crop : tuple, optional
+            Square viewport given as ``(center, span)``, where ``center`` is
+            ``(x, y)`` in plot coordinates and ``span`` is the half-width of
+            the square window.
         show : bool, optional
             If True (default), display the plot.
         save : str or None, optional
@@ -545,26 +647,53 @@ class Mesh:
         id_to_name = {
             str(row.ID): str(row.Name) for _, row in attr_df.iterrows()
         }
+        name_to_phys = {name: int(pid) for pid, name in id_to_name.items()}
 
         groups: dict[int, list[np.ndarray]] = defaultdict(list)
         for phys, tri in sliced:
             groups[int(phys)].append(tri[:, [i_ax, j_ax]])
 
+        all_pts = np.vstack([tri[:, [i_ax, j_ax]] for _, tri in sliced])
+        full_xmin = float(all_pts[:, 0].min())
+        full_xmax = float(all_pts[:, 0].max())
+        full_ymin = float(all_pts[:, 1].min())
+        full_ymax = float(all_pts[:, 1].max())
+        full_bounds = (full_xmin, full_xmax, full_ymin, full_ymax)
+
+        if zoom_to_component != None and crop != None:
+            raise ValueError("Use only one of zoom_to_component or crop.")
+        if zoom_to_component != None:
+            xmin, xmax, ymin, ymax = Mesh._plot_mesh_component_bounds(
+                groups, name_to_phys, zoom_to_component
+            )
+        elif crop != None:
+            if (
+                not isinstance(crop, (tuple, list))
+                or len(crop) != 2
+            ):
+                raise ValueError("crop must be a tuple (center, span).")
+            center, span = crop
+            xmin, xmax, ymin, ymax = Mesh._plot_mesh_crop_bounds(
+                center, span, full_bounds
+            )
+        else:
+            xmin, xmax, ymin, ymax = full_bounds
+
         fig, ax = plt.subplots()
-        cmap = plt.get_cmap("tab10")
+        colors = Mesh._PLOT_MESH_COLORS
         phys_ids = sorted(groups.keys())
         label_specs: list[tuple[np.ndarray, str]] = []
 
         for idx, phys in enumerate(phys_ids):
             polys = groups[phys]
-            color = cmap(idx % 10)
+            color = colors[idx % len(colors)]
             ax.add_collection(
                 PolyCollection(
                     polys,
                     facecolors=[color],
-                    edgecolors="0.25",
-                    linewidths=0.15,
-                    alpha=0.85,
+                    edgecolors="0.35",
+                    linewidths=0.12,
+                    alpha=0.92,
                 )
             )
 
@@ -572,22 +701,25 @@ class Mesh:
                 label = id_to_name.get(str(phys), f"ID {phys}")
                 if label in Mesh._PLOT_MESH_SKIP_LABELS:
                     continue
+                if not Mesh._group_in_view(polys, xmin, xmax, ymin, ymax):
+                    continue
                 anchor = Mesh._label_anchor_for_polys(polys)
+                anchor = np.array(
+                    [
+                        np.clip(anchor[0], xmin, xmax),
+                        np.clip(anchor[1], ymin, ymax),
+                    ]
+                )
                 label_specs.append((anchor, label))
 
-        all_pts = np.vstack([tri[:, [i_ax, j_ax]] for _, tri in sliced])
-        xmin = float(all_pts[:, 0].min())
-        xmax = float(all_pts[:, 0].max())
-        ymin = float(all_pts[:, 1].min())
-        ymax = float(all_pts[:, 1].max())
         xspan = xmax - xmin
         yspan = ymax - ymin
-        mesh_center = all_pts.mean(axis=0)
+        view_center = np.array([(xmin + xmax) / 2.0, (ymin + ymax) / 2.0])
 
         if labeling == True and label_specs:
             bounds = (xmin, xmax, ymin, ymax)
             anchors = np.asarray([anchor for anchor, _ in label_specs])
-            callouts = Mesh._initial_callout_positions(anchors, mesh_center, bounds)
+            callouts = Mesh._initial_callout_positions(anchors, view_center, bounds)
             texts = [text for _, text in label_specs]
             positions = Mesh._spread_label_positions(
                 callouts, texts, xspan, yspan, bounds
@@ -626,7 +758,16 @@ class Mesh:
         ax.set_xlabel(["x", "y", "z"][i_ax])
         ax.set_ylabel(["x", "y", "z"][j_ax])
         plane_axis = {"x": 0, "y": 1, "z": 2}[normal]
-        ax.set_title(f"Mesh cut: {normal} = {origin[plane_axis]:g}")
+        title = f"Mesh cut: {normal} = {origin[plane_axis]:g}"
+        if zoom_to_component != None:
+            if isinstance(zoom_to_component, str):
+                title += f"  |  {zoom_to_component}"
+            else:
+                title += "  |  " + ", ".join(zoom_to_component)
+        elif crop != None:
+            cx, cy = crop[0]
+            title += f"  |  crop ({cx:g}, {cy:g}), span {float(crop[1]):g}"
+        ax.set_title(title)
 
         if save != None:
             fig.savefig(save, bbox_inches="tight")
