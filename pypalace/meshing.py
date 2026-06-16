@@ -19,6 +19,20 @@ from shapely.ops import unary_union
 
 class Mesh:
     """Mesh I/O and Gmsh export helpers for Palace workflows."""
+
+    _PLOT_MESH_SKIP_LABELS = frozenset({"air", "substrate"})
+    _PLOT_MESH_COLORS = (
+        "#2196F3",  # bright blue
+        "#4CAF50",  # bright green
+        "#F44336",  # bright red
+        "#03A9F4",  # sky blue
+        "#66BB6A",  # light green
+        "#EF5350",  # light red
+        "#1565C0",  # vivid blue
+        "#2E7D32",  # green
+        "#D32F2F",  # red
+        "#00B0FF",  # azure
+    )
     
     @staticmethod
     def get_mesh_attributes(filename: str | Path):
@@ -114,6 +128,653 @@ class Mesh:
             
         return pd.DataFrame(attributes_dict,index = None)
 
+    @staticmethod
+    def _mesh_filetype(filename: str | Path) -> str:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in (".msh", ".bdf"):
+            raise ValueError('mesh file must end in ".msh" or ".bdf"')
+        return suffix
+
+    @staticmethod
+    def _plane_axes(normal: str) -> tuple[int, int]:
+        if normal == "z":
+            return 0, 1
+        if normal == "y":
+            return 0, 2
+        if normal == "x":
+            return 1, 2
+        raise ValueError("normal must be 'x', 'y', or 'z'")
+
+    @staticmethod
+    def _split_bdf_xy_token(token: str) -> tuple[float, float]:
+        if len(token) < 2:
+            raise ValueError(f"could not parse BDF coordinate token {token!r}")
+        for split in range(1, len(token)):
+            if token[split] not in ".-+eE":
+                continue
+            try:
+                return float(token[:split]), float(token[split:])
+            except ValueError:
+                continue
+        raise ValueError(f"could not parse BDF coordinate token {token!r}")
+
+    @staticmethod
+    def _read_msh_for_plot(filename: str | Path):
+        nodes: dict[int, tuple[float, float, float]] = {}
+        tris: list[tuple[int, tuple[int, int, int]]] = []
+        tets: list[tuple[int, tuple[int, int, int, int]]] = []
+
+        section = None
+        n_expected = 0
+        n_read = 0
+
+        with open(filename, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("$"):
+                    if line == "$Nodes":
+                        section = "nodes"
+                        n_read = 0
+                        n_expected = 0
+                    elif line == "$Elements":
+                        section = "elements"
+                        n_read = 0
+                        n_expected = 0
+                    elif line.startswith("$End"):
+                        section = None
+                    continue
+
+                if section == "nodes":
+                    if n_expected == 0:
+                        n_expected = int(line)
+                        continue
+                    parts = line.split()
+                    nid = int(parts[0])
+                    nodes[nid] = (float(parts[1]), float(parts[2]), float(parts[3]))
+                    n_read += 1
+                    if n_read >= n_expected:
+                        section = None
+
+                elif section == "elements":
+                    if n_expected == 0:
+                        n_expected = int(line)
+                        continue
+                    parts = line.split()
+                    elm_type = int(parts[1])
+                    num_tags = int(parts[2])
+                    phys = int(parts[3])
+                    node_start = 3 + num_tags
+                    node_ids = tuple(int(x) for x in parts[node_start:])
+
+                    if elm_type == 2 and len(node_ids) == 3:
+                        tris.append((phys, node_ids))
+                    elif elm_type == 4 and len(node_ids) == 4:
+                        tets.append((phys, node_ids))
+
+                    n_read += 1
+                    if n_read >= n_expected:
+                        section = None
+
+        return nodes, tris, tets
+
+    @staticmethod
+    def _read_bdf_for_plot(filename: str | Path):
+        nodes: dict[int, tuple[float, float, float]] = {}
+        tris: list[tuple[int, tuple[int, int, int]]] = []
+        tets: list[tuple[int, tuple[int, int, int, int]]] = []
+
+        pending_id = None
+        pending_xy = None
+        in_bulk = False
+
+        with open(filename, "r") as f:
+            for line in f:
+                if "BEGIN BULK" in line:
+                    in_bulk = True
+                    continue
+                if not in_bulk:
+                    continue
+
+                if line.startswith("GRID*"):
+                    parts = line.split()
+                    pending_id = int(parts[1])
+                    if len(parts) >= 5:
+                        pending_xy = (float(parts[3]), float(parts[4]))
+                    elif len(parts) == 4:
+                        pending_xy = Mesh._split_bdf_xy_token(parts[3])
+                    else:
+                        pending_id = None
+                        pending_xy = None
+
+                elif line.startswith("*") and pending_id != None:
+                    z = float(line.split()[1])
+                    nodes[pending_id] = (pending_xy[0], pending_xy[1], z)
+                    pending_id = None
+                    pending_xy = None
+
+                elif line.startswith("CTRIA3"):
+                    parts = line.split()
+                    pid = int(parts[2])
+                    tri = (int(parts[3]), int(parts[4]), int(parts[5]))
+                    tris.append((pid, tri))
+
+                elif line.startswith("CTETRA"):
+                    parts = line.split()
+                    pid = int(parts[2])
+                    tet = tuple(int(parts[i]) for i in range(3, 7))
+                    tets.append((pid, tet))
+
+        return nodes, tris, tets
+
+    @staticmethod
+    def _triangles_on_plane(
+        nodes: dict[int, tuple[float, float, float]],
+        tris: list[tuple[int, tuple[int, int, int]]],
+        tets: list[tuple[int, tuple[int, int, int, int]]],
+        normal: str,
+        origin: tuple[float, float, float],
+        tol: float,
+    ) -> list[tuple[int, np.ndarray]]:
+        axis = {"x": 0, "y": 1, "z": 2}[normal]
+        origin_val = float(origin[axis])
+        out: list[tuple[int, np.ndarray]] = []
+
+        def on_plane(nid: int) -> bool:
+            return abs(nodes[nid][axis] - origin_val) <= tol
+
+        def add_tri(phys: int, nids: tuple[int, int, int]):
+            if not (on_plane(nids[0]) and on_plane(nids[1]) and on_plane(nids[2])):
+                return
+            out.append(
+                (
+                    phys,
+                    np.asarray(
+                        [nodes[nids[0]], nodes[nids[1]], nodes[nids[2]]], dtype=float
+                    ),
+                )
+            )
+
+        for phys, nids in tris:
+            add_tri(phys, nids)
+
+        tet_faces = (
+            (0, 1, 2),
+            (0, 1, 3),
+            (0, 2, 3),
+            (1, 2, 3),
+        )
+        for phys, nids in tets:
+            for face in tet_faces:
+                add_tri(phys, (nids[face[0]], nids[face[1]], nids[face[2]]))
+
+        return out
+
+    @staticmethod
+    def _triangle_area_2d(tri: np.ndarray) -> float:
+        a, b, c = tri
+        return 0.5 * abs(
+            (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+        )
+
+    @staticmethod
+    def _label_anchor_for_polys(polys: list[np.ndarray]) -> np.ndarray:
+        """Anchor labels on the largest face in a physical group."""
+        areas = [Mesh._triangle_area_2d(tri) for tri in polys]
+        return polys[int(np.argmax(areas))].mean(axis=0)
+
+    @staticmethod
+    def _ray_extent_from_point(
+        px: float,
+        py: float,
+        ux: float,
+        uy: float,
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+    ) -> float:
+        """Distance from a point to the plot boundary along a unit direction."""
+        t_candidates = []
+        if ux > 1e-12:
+            t_candidates.append((xmax - px) / ux)
+        elif ux < -1e-12:
+            t_candidates.append((xmin - px) / ux)
+        if uy > 1e-12:
+            t_candidates.append((ymax - py) / uy)
+        elif uy < -1e-12:
+            t_candidates.append((ymin - py) / uy)
+        if not t_candidates:
+            return max(xmax - xmin, ymax - ymin, 1e-9) * 0.5
+        valid = [t for t in t_candidates if t > 1e-9]
+        if not valid:
+            return max(xmax - xmin, ymax - ymin, 1e-9) * 0.5
+        return min(valid)
+
+    @staticmethod
+    def _callout_label_position(
+        anchor: np.ndarray,
+        center: np.ndarray,
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+    ) -> np.ndarray:
+        """Place a callout label inside the mesh bounds, away from its anchor."""
+        span = max(xmax - xmin, ymax - ymin, 1e-9)
+        inset = 0.035 * span
+
+        cx, cy = float(center[0]), float(center[1])
+        ax, ay = float(anchor[0]), float(anchor[1])
+        dx, dy = ax - cx, ay - cy
+        norm = float(np.hypot(dx, dy))
+        if norm < 0.05 * span:
+            dy = 1.0 if ay >= cy else -1.0
+            dx = 0.0
+            norm = 1.0
+        ux, uy = dx / norm, dy / norm
+
+        t_edge = Mesh._ray_extent_from_point(ax, ay, ux, uy, xmin, xmax, ymin, ymax)
+        offset = float(np.clip(0.22 * t_edge, 0.10 * span, 0.28 * t_edge))
+        pos = np.array([ax + ux * offset, ay + uy * offset])
+        pos[0] = np.clip(pos[0], xmin + inset, xmax - inset)
+        pos[1] = np.clip(pos[1], ymin + inset, ymax - inset)
+        return pos
+
+    @staticmethod
+    def _initial_callout_positions(
+        anchors: np.ndarray,
+        center: np.ndarray,
+        bounds: tuple[float, float, float, float],
+    ) -> np.ndarray:
+        """Build starting callout positions, fanning out labels near the mesh center."""
+        xmin, xmax, ymin, ymax = bounds
+        span = max(xmax - xmin, ymax - ymin, 1e-9)
+        inset = 0.035 * span
+        xmin_i, xmax_i = xmin + inset, xmax - inset
+        ymin_i, ymax_i = ymin + inset, ymax - inset
+
+        positions = np.asarray(
+            [
+                Mesh._callout_label_position(anchor, center, xmin, xmax, ymin, ymax)
+                for anchor in anchors
+            ],
+            dtype=float,
+        )
+
+        center_dists = np.linalg.norm(anchors - center, axis=1)
+        near_idx = np.flatnonzero(center_dists < 0.15 * span)
+        if len(near_idx) > 1:
+            angles = np.linspace(np.pi / 4.0, 3.0 * np.pi / 4.0, len(near_idx))
+            offset = 0.16 * span
+            for k, idx in enumerate(near_idx):
+                positions[idx] = anchors[idx] + offset * np.array(
+                    [np.cos(angles[k]), np.sin(angles[k])]
+                )
+
+        positions[:, 0] = np.clip(positions[:, 0], xmin_i, xmax_i)
+        positions[:, 1] = np.clip(positions[:, 1], ymin_i, ymax_i)
+        return positions
+
+    @staticmethod
+    def _spread_label_positions(
+        initial: np.ndarray,
+        texts: list[str],
+        xspan: float,
+        yspan: float,
+        bounds: tuple[float, float, float, float],
+        fontsize: float = 8,
+        n_iter: int = 160,
+    ) -> np.ndarray:
+        """Separate labels that are too close, keeping them inside the mesh bounds."""
+        n = len(texts)
+        xmin, xmax, ymin, ymax = bounds
+        if n <= 1:
+            return initial.copy()
+
+        span = max(xspan, yspan, 1e-9)
+        inset = 0.035 * span
+        xmin_i, xmax_i = xmin + inset, xmax - inset
+        ymin_i, ymax_i = ymin + inset, ymax - inset
+
+        pos = initial.astype(float).copy()
+        preferred = pos.copy()
+
+        char_w = span * 0.011 * (fontsize / 8.0)
+        char_h = span * 0.028 * (fontsize / 8.0)
+        half_sizes = np.array([[0.5 * len(t) * char_w, 0.5 * char_h] for t in texts])
+
+        def clip_positions(points: np.ndarray) -> np.ndarray:
+            points[:, 0] = np.clip(points[:, 0], xmin_i, xmax_i)
+            points[:, 1] = np.clip(points[:, 1], ymin_i, ymax_i)
+            return points
+
+        max_drift = 0.30 * span
+
+        for _ in range(n_iter):
+            for i in range(n):
+                for j in range(i + 1, n):
+                    dx = pos[j, 0] - pos[i, 0]
+                    dy = pos[j, 1] - pos[i, 1]
+                    dist = float(np.hypot(dx, dy))
+                    min_dist = float(
+                        np.hypot(
+                            half_sizes[i, 0] + half_sizes[j, 0],
+                            half_sizes[i, 1] + half_sizes[j, 1],
+                        )
+                        + 0.04 * span
+                    )
+                    if dist >= min_dist:
+                        continue
+
+                    if dist > 1e-9:
+                        push = 0.70 * (min_dist - dist) / 2.0
+                        pos[i, 0] -= push * dx / dist
+                        pos[i, 1] -= push * dy / dist
+                        pos[j, 0] += push * dx / dist
+                        pos[j, 1] += push * dy / dist
+                    else:
+                        push = 0.70 * min_dist / 2.0
+                        sign = 1.0 if j > i else -1.0
+                        pos[i, 1] -= push * sign
+                        pos[j, 1] += push * sign
+
+            drift = pos - preferred
+            drift_dist = np.linalg.norm(drift, axis=1)
+            over = drift_dist > max_drift
+            if np.any(over):
+                pos[over] = preferred[over] + drift[over] * (
+                    max_drift / drift_dist[over, None]
+                )
+
+            pos += 0.08 * (preferred - pos)
+            clip_positions(pos)
+
+        return pos
+
+    @staticmethod
+    def _plot_mesh_component_bounds(
+        groups: dict[int, list[np.ndarray]],
+        name_to_phys: dict[str, int],
+        component: str | list[str],
+        pad_frac: float = 0.1,
+    ) -> tuple[float, float, float, float]:
+        """Bounding box for one or more mesh attribute names on the cut plane."""
+        if isinstance(component, str):
+            names = [component]
+        else:
+            names = list(component)
+
+        phys_ids: list[int] = []
+        for name in names:
+            if name not in name_to_phys:
+                known = ", ".join(sorted(name_to_phys))
+                raise ValueError(
+                    f"Unknown mesh component {name!r}. Known attributes: {known}"
+                )
+            phys_ids.append(name_to_phys[name])
+
+        pts = np.vstack(
+            [tri for pid in phys_ids for tri in groups[pid]]
+        )
+        xmin = float(pts[:, 0].min())
+        xmax = float(pts[:, 0].max())
+        ymin = float(pts[:, 1].min())
+        ymax = float(pts[:, 1].max())
+        pad = pad_frac * max(xmax - xmin, ymax - ymin, 1e-9)
+        return xmin - pad, xmax + pad, ymin - pad, ymax + pad
+
+    @staticmethod
+    def _group_in_view(
+        polys: list[np.ndarray],
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+    ) -> bool:
+        """Return True if any triangle from the group lies inside the viewport."""
+        for tri in polys:
+            inside = (
+                (tri[:, 0] >= xmin)
+                & (tri[:, 0] <= xmax)
+                & (tri[:, 1] >= ymin)
+                & (tri[:, 1] <= ymax)
+            )
+            if np.any(inside):
+                return True
+        return False
+
+    @staticmethod
+    def _plot_mesh_crop_bounds(
+        center: tuple[float, float],
+        span: float,
+        full_bounds: tuple[float, float, float, float],
+    ) -> tuple[float, float, float, float]:
+        """Square viewport centered on ``center`` with half-width ``span``."""
+        if span <= 0:
+            raise ValueError("crop span must be positive.")
+
+        cx, cy = (float(center[0]), float(center[1]))
+        half = float(span)
+        xmin, xmax, ymin, ymax = (
+            cx - half,
+            cx + half,
+            cy - half,
+            cy + half,
+        )
+        fxmin, fxmax, fymin, fymax = full_bounds
+        return (
+            max(xmin, fxmin),
+            min(xmax, fxmax),
+            max(ymin, fymin),
+            min(ymax, fymax),
+        )
+
+    @staticmethod
+    def plot_mesh(
+        meshfile,
+        labeling=False,
+        normal="z",
+        origin=(0, 0, 0),
+        tol=None,
+        zoom_to_component=None,
+        crop=None,
+        show=True,
+        save=None,
+    ):
+        """
+        Plot a 2D cut through a Palace mesh, colored by physical attribute.
+
+        Parameters
+        ----------
+        meshfile : str or Path
+            Path to a ``.msh`` or ``.bdf`` mesh file.
+        labeling : bool, optional
+            If True, annotate selected physical groups with callout labels and
+            arrows. Volume labels ``air`` and ``substrate`` are omitted.
+        normal : str, optional
+            Normal of the cut plane. One of ``"x"``, ``"y"``, or ``"z"``.
+            Default is ``"z"`` (xy view at the metal layer).
+        origin : tuple, optional
+            Point on the cut plane. Default is ``(0, 0, 0)``.
+        tol : float or None, optional
+            Distance from the plane within which elements are included.
+            Default is ``1e-3`` times the mesh bounding-box span.
+        zoom_to_component : str or list of str, optional
+            Crop the view to the bounding box of one or more mesh attribute
+            names, with a small padding margin.
+        crop : tuple, optional
+            Square viewport given as ``(center, span)``, where ``center`` is
+            ``(x, y)`` in plot coordinates and ``span`` is the half-width of
+            the square window.
+        show : bool, optional
+            If True (default), display the plot.
+        save : str or None, optional
+            If set, save the figure to this path.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.collections import PolyCollection
+
+        meshfile = Path(meshfile)
+        filetype = Mesh._mesh_filetype(meshfile)
+
+        if filetype == ".msh":
+            nodes, tris, tets = Mesh._read_msh_for_plot(meshfile)
+        else:
+            nodes, tris, tets = Mesh._read_bdf_for_plot(meshfile)
+
+        if not nodes:
+            raise ValueError(f"No nodes found in mesh file {meshfile}")
+
+        coords = np.asarray(list(nodes.values()), dtype=float)
+        span = float(np.max(coords.max(axis=0) - coords.min(axis=0)))
+        if tol == None:
+            tol = max(1e-9, 1e-3 * span)
+
+        origin = tuple(float(x) for x in origin)
+        sliced = Mesh._triangles_on_plane(nodes, tris, tets, normal, origin, tol)
+
+        if not sliced:
+            axis = {"x": 0, "y": 1, "z": 2}[normal]
+            raise ValueError(
+                f"No mesh faces found on the cut plane {normal}={origin[axis]:g} "
+                f"(tol={tol:g}). Try adjusting origin or tol."
+            )
+
+        i_ax, j_ax = Mesh._plane_axes(normal)
+        attr_df = Mesh.get_mesh_attributes(str(meshfile))
+        id_to_name = {
+            str(row.ID): str(row.Name) for _, row in attr_df.iterrows()
+        }
+        name_to_phys = {name: int(pid) for pid, name in id_to_name.items()}
+
+        groups: dict[int, list[np.ndarray]] = defaultdict(list)
+        for phys, tri in sliced:
+            groups[int(phys)].append(tri[:, [i_ax, j_ax]])
+
+        all_pts = np.vstack([tri[:, [i_ax, j_ax]] for _, tri in sliced])
+        full_xmin = float(all_pts[:, 0].min())
+        full_xmax = float(all_pts[:, 0].max())
+        full_ymin = float(all_pts[:, 1].min())
+        full_ymax = float(all_pts[:, 1].max())
+        full_bounds = (full_xmin, full_xmax, full_ymin, full_ymax)
+
+        if zoom_to_component != None and crop != None:
+            raise ValueError("Use only one of zoom_to_component or crop.")
+        if zoom_to_component != None:
+            xmin, xmax, ymin, ymax = Mesh._plot_mesh_component_bounds(
+                groups, name_to_phys, zoom_to_component
+            )
+        elif crop != None:
+            if (
+                not isinstance(crop, (tuple, list))
+                or len(crop) != 2
+            ):
+                raise ValueError("crop must be a tuple (center, span).")
+            center, span = crop
+            xmin, xmax, ymin, ymax = Mesh._plot_mesh_crop_bounds(
+                center, span, full_bounds
+            )
+        else:
+            xmin, xmax, ymin, ymax = full_bounds
+
+        fig, ax = plt.subplots()
+        colors = Mesh._PLOT_MESH_COLORS
+        phys_ids = sorted(groups.keys())
+        label_specs: list[tuple[np.ndarray, str]] = []
+
+        for idx, phys in enumerate(phys_ids):
+            polys = groups[phys]
+            color = colors[idx % len(colors)]
+            ax.add_collection(
+                PolyCollection(
+                    polys,
+                    facecolors=[color],
+                    edgecolors="0.25",
+                    linewidths=0.15,
+                    alpha=0.88,
+                )
+            )
+
+            if labeling == True:
+                label = id_to_name.get(str(phys), f"ID {phys}")
+                if label in Mesh._PLOT_MESH_SKIP_LABELS:
+                    continue
+                if not Mesh._group_in_view(polys, xmin, xmax, ymin, ymax):
+                    continue
+                anchor = Mesh._label_anchor_for_polys(polys)
+                anchor = np.array(
+                    [
+                        np.clip(anchor[0], xmin, xmax),
+                        np.clip(anchor[1], ymin, ymax),
+                    ]
+                )
+                label_specs.append((anchor, label))
+
+        xspan = xmax - xmin
+        yspan = ymax - ymin
+        view_center = np.array([(xmin + xmax) / 2.0, (ymin + ymax) / 2.0])
+
+        if labeling == True and label_specs:
+            bounds = (xmin, xmax, ymin, ymax)
+            anchors = np.asarray([anchor for anchor, _ in label_specs])
+            callouts = Mesh._initial_callout_positions(anchors, view_center, bounds)
+            texts = [text for _, text in label_specs]
+            positions = Mesh._spread_label_positions(
+                callouts, texts, xspan, yspan, bounds
+            )
+            label_bbox = dict(
+                boxstyle="round,pad=0.2",
+                facecolor="white",
+                edgecolor="0.8",
+                alpha=0.9,
+                linewidth=0.5,
+            )
+            arrowprops = dict(
+                arrowstyle="->",
+                color="0.35",
+                lw=0.8,
+                shrinkA=4,
+                shrinkB=3,
+            )
+            for (anchor, text), pos in zip(label_specs, positions):
+                ax.annotate(
+                    text,
+                    xy=anchor,
+                    xytext=pos,
+                    fontsize=8,
+                    ha="center",
+                    va="center",
+                    color="black",
+                    clip_on=False,
+                    arrowprops=arrowprops,
+                    bbox=label_bbox,
+                )
+
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel(["x", "y", "z"][i_ax])
+        ax.set_ylabel(["x", "y", "z"][j_ax])
+        plane_axis = {"x": 0, "y": 1, "z": 2}[normal]
+        title = f"Mesh cut: {normal} = {origin[plane_axis]:g}"
+        if zoom_to_component != None:
+            if isinstance(zoom_to_component, str):
+                title += f"  |  {zoom_to_component}"
+            else:
+                title += "  |  " + ", ".join(zoom_to_component)
+        elif crop != None:
+            cx, cy = crop[0]
+            title += f"  |  crop ({cx:g}, {cy:g}), span {float(crop[1]):g}"
+        ax.set_title(title)
+
+        if save != None:
+            fig.savefig(save, bbox_inches="tight")
+        if show == True:
+            plt.show()
+        else:
+            plt.close(fig)
 
     @staticmethod
     def _parse_qmetal_length(value: Any, design: Any) -> float:
