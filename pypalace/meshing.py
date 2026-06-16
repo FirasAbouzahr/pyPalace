@@ -22,16 +22,16 @@ class Mesh:
 
     _PLOT_MESH_SKIP_LABELS = frozenset({"air", "substrate"})
     _PLOT_MESH_COLORS = (
-        "#B8D4E8",  # pale blue
-        "#BFE3C6",  # pale green
-        "#F4B4AE",  # pale red
-        "#C9D8F0",  # soft periwinkle
-        "#D8F0E3",  # mint
-        "#F9D0C4",  # pale coral
-        "#E3D4F5",  # pale lavender
-        "#FBE7B2",  # pale gold
-        "#C6E2E9",  # ice blue
-        "#E8F5C8",  # pale lime
+        "#2196F3",  # bright blue
+        "#4CAF50",  # bright green
+        "#F44336",  # bright red
+        "#03A9F4",  # sky blue
+        "#66BB6A",  # light green
+        "#EF5350",  # light red
+        "#1565C0",  # vivid blue
+        "#2E7D32",  # green
+        "#D32F2F",  # red
+        "#00B0FF",  # azure
     )
     
     @staticmethod
@@ -691,9 +691,9 @@ class Mesh:
                 PolyCollection(
                     polys,
                     facecolors=[color],
-                    edgecolors="0.35",
-                    linewidths=0.12,
-                    alpha=0.92,
+                    edgecolors="0.25",
+                    linewidths=0.15,
+                    alpha=0.88,
                 )
             )
 
