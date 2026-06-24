@@ -1090,7 +1090,7 @@ class Mesh:
         margin_y: float | None = None,
         volume_mesh_size: float = 0.25,
         surface_mesh_size: float = 0.02,
-        surface_mesh_sizes: dict[str | tuple[str, str], float] | None = None,
+        custom_surface_mesh: dict[str | tuple[str, str], float] | None = None,
         refinement_radius: float = 0.15,
         mesh_scale: float = 1000.0,
         ground_plane_attr: int | str = "auto",
@@ -1126,11 +1126,11 @@ class Mesh:
             refine further during the solve.
         surface_mesh_size:
             Default mesh target on circuit polygon faces (metals and etch annuli).
-        surface_mesh_sizes:
-            Optional per-surface overrides keyed like ``Attributes`` (``"name"`` or
-            ``("component", "name")``). Special keys ``"ground_plane"`` and
-            ``"far_field"`` may also be set. Unlisted surfaces use
-            ``surface_mesh_size``.
+        custom_surface_mesh:
+            Optional per-surface mesh size overrides keyed like ``Attributes``
+            (``"name"`` or ``("component", "name")``). Special keys
+            ``"ground_plane"`` and ``"far_field"`` may also be set. Unlisted
+            surfaces use ``surface_mesh_size``.
         refinement_radius:
             Distance over which the background field grows from the local surface
             mesh size to ``volume_mesh_size``.
@@ -1219,7 +1219,7 @@ class Mesh:
             print(f"{num_to_repair} geometry component(s) sucessfully repaired")
 
         Attributes = dict(Attributes or {})
-        surface_mesh_sizes = dict(surface_mesh_sizes or {})
+        custom_surface_mesh = dict(custom_surface_mesh or {})
         output_path = Path(output_mesh)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1245,15 +1245,15 @@ class Mesh:
             surface_mesh_size * mesh_scale,
             refinement_radius * mesh_scale,
         )
-        surface_mesh_sizes = {
+        custom_surface_mesh = {
             key: float(value) * mesh_scale
-            for key, value in surface_mesh_sizes.items()
+            for key, value in custom_surface_mesh.items()
         }
 
         finest_surface_mesh_size = surface_mesh_size
-        if len(surface_mesh_sizes) != 0:
+        if len(custom_surface_mesh) != 0:
             finest_surface_mesh_size = min(
-                [surface_mesh_size] + list(surface_mesh_sizes.values())
+                [surface_mesh_size] + list(custom_surface_mesh.values())
             )
 
         geom_tol = max(1e-12, geom_tol_factor * finest_surface_mesh_size)
@@ -1297,10 +1297,10 @@ class Mesh:
             return None, None
 
         def lookup_surface_mesh_size(component: Any, name: str) -> float:
-            if (component, name) in surface_mesh_sizes:
-                return surface_mesh_sizes[(component, name)]
-            if name in surface_mesh_sizes:
-                return surface_mesh_sizes[name]
+            if (component, name) in custom_surface_mesh:
+                return custom_surface_mesh[(component, name)]
+            if name in custom_surface_mesh:
+                return custom_surface_mesh[name]
             return surface_mesh_size
 
         attr_mesh_sizes: dict[int, float] = {}
@@ -1315,7 +1315,7 @@ class Mesh:
                 attr = int(attr)
                 if attr in attr_mesh_sizes and attr_mesh_sizes[attr] != mesh_lc:
                     raise ValueError(
-                        f"Conflicting surface_mesh_sizes for attribute {attr}: "
+                        f"Conflicting custom_surface_mesh for attribute {attr}: "
                         f"{attr_mesh_sizes[attr]:g} vs {mesh_lc:g} on {name!r}."
                     )
                 attr_mesh_sizes[attr] = mesh_lc
@@ -1355,16 +1355,16 @@ class Mesh:
             elif isinstance(key, str) and key not in present_names:
                 warnings.append(f"Attributes key {key!r} matched no surface row")
 
-        for key in surface_mesh_sizes:
+        for key in custom_surface_mesh:
             if key in ("ground_plane", "far_field"):
                 continue
             if isinstance(key, tuple) and key not in present_keys:
                 warnings.append(
-                    f"surface_mesh_sizes key {key!r} matched no surface row"
+                    f"custom_surface_mesh key {key!r} matched no surface row"
                 )
             elif isinstance(key, str) and key not in present_names:
                 warnings.append(
-                    f"surface_mesh_sizes key {key!r} matched no surface row"
+                    f"custom_surface_mesh key {key!r} matched no surface row"
                 )
 
         tagged_records = [record for record in records if record["attribute"] is not None]
@@ -1562,13 +1562,13 @@ class Mesh:
                 size_to_faces[surface_mesh_size].update(gap_faces)
 
             if ground_plane_faces:
-                ground_plane_mesh_size = surface_mesh_sizes.get(
+                ground_plane_mesh_size = custom_surface_mesh.get(
                     "ground_plane", surface_mesh_size
                 )
                 size_to_faces[ground_plane_mesh_size].update(ground_plane_faces)
 
             if farfield_faces:
-                farfield_mesh_size = surface_mesh_sizes.get(
+                farfield_mesh_size = custom_surface_mesh.get(
                     "far_field", surface_mesh_size
                 )
                 size_to_faces[farfield_mesh_size].update(farfield_faces)
