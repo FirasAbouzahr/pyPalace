@@ -54,7 +54,8 @@ class Mesh:
 
         attributes_list = []
         attributes_dict = {"Name":[],"ID":[],"Type":[]}
-        
+
+        filename = str(filename)
         filetype = filename[-4:]
         
         if filetype == '.bdf':
@@ -1087,9 +1088,10 @@ class Mesh:
         margin: float = 0.5,
         margin_x: float | None = None,
         margin_y: float | None = None,
-        volume_mesh_size: float = 0.1,
-        surface_mesh_size: float = 0.005,
-        refinement_radius: float = 0.05,
+        volume_mesh_size: float = 0.25,
+        surface_mesh_size: float = 0.02,
+        custom_surface_mesh: dict[str | tuple[str, str], float] | None = None,
+        refinement_radius: float = 0.15,
         mesh_scale: float = 1000.0,
         ground_plane_attr: int | str = "auto",
         farfield_attr: int | str = "auto",
@@ -1120,12 +1122,18 @@ class Mesh:
             Padding in x and y added to the layout bounding box before building
             the substrate and air box. Default to ``margin`` when omitted.
         volume_mesh_size:
-            Bulk mesh target in design units.
+            Bulk mesh target in design units. Default is coarse; Palace AMR can
+            refine further during the solve.
         surface_mesh_size:
-            Mesh target on every circuit polygon face (metals and etch annuli).
+            Default mesh target on circuit polygon faces (metals and etch annuli).
+        custom_surface_mesh:
+            Optional per-surface mesh size overrides keyed like ``Attributes``
+            (``"name"`` or ``("component", "name")``). Special keys
+            ``"ground_plane"`` and ``"far_field"`` may also be set. Unlisted
+            surfaces use ``surface_mesh_size``.
         refinement_radius:
-            Distance over which the background field grows from
-            ``surface_mesh_size`` to ``volume_mesh_size``.
+            Distance over which the background field grows from the local surface
+            mesh size to ``volume_mesh_size``.
         mesh_scale:
             Multiplies all design coordinates before writing the mesh. If the
             design is in mm and Palace uses ``L0 = 1e-6`` (one mesh unit is one
@@ -1137,7 +1145,7 @@ class Mesh:
             Volume physical-group attributes.
         geom_tol_factor:
             Tolerance used for face-to-polygon classification, as a fraction of
-            ``surface_mesh_size`` after scaling.
+            the finest surface mesh size after scaling.
         """
         
         import gmsh
@@ -1211,6 +1219,7 @@ class Mesh:
             print(f"{num_to_repair} geometry component(s) sucessfully repaired")
 
         Attributes = dict(Attributes or {})
+        custom_surface_mesh = dict(custom_surface_mesh or {})
         output_path = Path(output_mesh)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1236,8 +1245,18 @@ class Mesh:
             surface_mesh_size * mesh_scale,
             refinement_radius * mesh_scale,
         )
+        custom_surface_mesh = {
+            key: float(value) * mesh_scale
+            for key, value in custom_surface_mesh.items()
+        }
 
-        geom_tol = max(1e-12, geom_tol_factor * surface_mesh_size)
+        finest_surface_mesh_size = surface_mesh_size
+        if len(custom_surface_mesh) != 0:
+            finest_surface_mesh_size = min(
+                [surface_mesh_size] + list(custom_surface_mesh.values())
+            )
+
+        geom_tol = max(1e-12, geom_tol_factor * finest_surface_mesh_size)
         design_unit_to_meters = Mesh._qmetal_design_unit_to_meters(design)
         l0_meters = design_unit_to_meters / mesh_scale
 
@@ -1277,12 +1296,29 @@ class Mesh:
                 return Attributes[name], name
             return None, None
 
+        def lookup_surface_mesh_size(component: Any, name: str) -> float:
+            if (component, name) in custom_surface_mesh:
+                return custom_surface_mesh[(component, name)]
+            if name in custom_surface_mesh:
+                return custom_surface_mesh[name]
+            return surface_mesh_size
+
+        attr_mesh_sizes: dict[int, float] = {}
         records: list[dict[str, Any]] = []
         for _, row in surfaces_df.iterrows():
             name = str(row["name"])
             component = row["component"]
             attr, key = lookup_attr(component, name)
             is_subtract = bool(row["subtract"])
+            mesh_lc = lookup_surface_mesh_size(component, name)
+            if attr != None:
+                attr = int(attr)
+                if attr in attr_mesh_sizes and attr_mesh_sizes[attr] != mesh_lc:
+                    raise ValueError(
+                        f"Conflicting custom_surface_mesh for attribute {attr}: "
+                        f"{attr_mesh_sizes[attr]:g} vs {mesh_lc:g} on {name!r}."
+                    )
+                attr_mesh_sizes[attr] = mesh_lc
 
             for polygon in polygons_from_geometry(row["geometry"]):
                 if mesh_scale != 1.0:
@@ -1300,6 +1336,7 @@ class Mesh:
                         "subtract": is_subtract,
                         "attribute": attr,
                         "key": key,
+                        "mesh_lc": mesh_lc,
                     }
                 )
 
@@ -1317,6 +1354,18 @@ class Mesh:
                 warnings.append(f"Attributes key {key!r} matched no surface row")
             elif isinstance(key, str) and key not in present_names:
                 warnings.append(f"Attributes key {key!r} matched no surface row")
+
+        for key in custom_surface_mesh:
+            if key in ("ground_plane", "far_field"):
+                continue
+            if isinstance(key, tuple) and key not in present_keys:
+                warnings.append(
+                    f"custom_surface_mesh key {key!r} matched no surface row"
+                )
+            elif isinstance(key, str) and key not in present_names:
+                warnings.append(
+                    f"custom_surface_mesh key {key!r} matched no surface row"
+                )
 
         tagged_records = [record for record in records if record["attribute"] is not None]
 
@@ -1417,7 +1466,7 @@ class Mesh:
 
             for record in records:
                 record["surface_tag"] = add_polygon_surface(
-                    record["polygon"], z=0.0, lc=surface_mesh_size
+                    record["polygon"], z=0.0, lc=record["mesh_lc"]
                 )
             surface_tags = [record["surface_tag"] for record in records]
 
@@ -1506,30 +1555,61 @@ class Mesh:
             else:
                 warnings.append("no far_field faces were identified")
 
-            poly_faces: set[int] = set()
-            for faces in attr_to_faces.values():
-                poly_faces.update(faces)
-            poly_faces.update(gap_faces)
+            size_to_faces: dict[float, set[int]] = defaultdict(set)
+            for attr, faces in attr_to_faces.items():
+                size_to_faces[attr_mesh_sizes[attr]].update(faces)
+            if gap_faces:
+                size_to_faces[surface_mesh_size].update(gap_faces)
 
-            if poly_faces:
+            if ground_plane_faces:
+                ground_plane_mesh_size = custom_surface_mesh.get(
+                    "ground_plane", surface_mesh_size
+                )
+                size_to_faces[ground_plane_mesh_size].update(ground_plane_faces)
+
+            if farfield_faces:
+                farfield_mesh_size = custom_surface_mesh.get(
+                    "far_field", surface_mesh_size
+                )
+                size_to_faces[farfield_mesh_size].update(farfield_faces)
+
+            mesh_fields: list[int] = []
+            for size_min, faces in size_to_faces.items():
+                if not faces:
+                    continue
                 dist_field = gmsh.model.mesh.field.add("Distance")
                 gmsh.model.mesh.field.setNumbers(
-                    dist_field, "SurfacesList", sorted(poly_faces)
+                    dist_field, "SurfacesList", sorted(faces)
                 )
                 gmsh.model.mesh.field.setNumber(dist_field, "Sampling", 100)
 
                 thresh_field = gmsh.model.mesh.field.add("Threshold")
                 gmsh.model.mesh.field.setNumber(thresh_field, "InField", dist_field)
-                gmsh.model.mesh.field.setNumber(thresh_field, "SizeMin", surface_mesh_size)
-                gmsh.model.mesh.field.setNumber(thresh_field, "SizeMax", volume_mesh_size)
+                gmsh.model.mesh.field.setNumber(thresh_field, "SizeMin", size_min)
+                gmsh.model.mesh.field.setNumber(
+                    thresh_field, "SizeMax", volume_mesh_size
+                )
                 gmsh.model.mesh.field.setNumber(thresh_field, "DistMin", 0.0)
-                gmsh.model.mesh.field.setNumber(thresh_field, "DistMax", refinement_radius)
-                gmsh.model.mesh.field.setAsBackgroundMesh(thresh_field)
+                gmsh.model.mesh.field.setNumber(
+                    thresh_field, "DistMax", refinement_radius
+                )
+                mesh_fields.append(thresh_field)
+
+            if len(mesh_fields) == 1:
+                gmsh.model.mesh.field.setAsBackgroundMesh(mesh_fields[0])
+            elif len(mesh_fields) > 1:
+                min_field = gmsh.model.mesh.field.add("Min")
+                gmsh.model.mesh.field.setNumbers(
+                    min_field, "FieldsList", mesh_fields
+                )
+                gmsh.model.mesh.field.setAsBackgroundMesh(min_field)
 
             gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
             gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
             gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
-            gmsh.option.setNumber("Mesh.CharacteristicLengthMin", surface_mesh_size)
+            gmsh.option.setNumber(
+                "Mesh.CharacteristicLengthMin", finest_surface_mesh_size
+            )
             gmsh.option.setNumber("Mesh.CharacteristicLengthMax", volume_mesh_size)
             gmsh.option.setNumber("Mesh.ElementOrder", 1)
             gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
