@@ -6,6 +6,7 @@ import pandas as pd
 import subprocess
 import numpy as np
 import json
+import math
 from .config import Config
 
 from collections import defaultdict
@@ -995,6 +996,226 @@ class Mesh:
             comp_name = str(component_id)
         return f"{comp_name}_{surface_name}"
 
+    @dataclass(frozen=True)
+    class BoundarySimplifySettings:
+        """Heuristic short-edge run merging for polygon imprint boundaries."""
+
+        min_edges: int = 10
+        cluster_span: float | None = None
+        short_edge: float | None = None
+        smooth_angle_deg: float = 35.0
+        max_deviation: float | None = None
+
+    @staticmethod
+    def _resolve_boundary_simplify_settings(
+        settings: "Mesh.BoundarySimplifySettings",
+        surface_mesh_size: float,
+        mesh_scale: float,
+    ) -> "Mesh.BoundarySimplifySettings":
+        """Fill automatic span/edge/deviation defaults in scaled mesh units."""
+        ten_um_design = 0.01
+        cluster_span = settings.cluster_span
+        if cluster_span is None:
+            cluster_span = max(ten_um_design * mesh_scale, 2.0 * surface_mesh_size)
+        short_edge = settings.short_edge
+        if short_edge is None:
+            short_edge = 0.5 * surface_mesh_size
+        max_deviation = settings.max_deviation
+        if max_deviation is None:
+            max_deviation = 0.1 * surface_mesh_size
+        return Mesh.BoundarySimplifySettings(
+            min_edges=settings.min_edges,
+            cluster_span=cluster_span,
+            short_edge=short_edge,
+            smooth_angle_deg=settings.smooth_angle_deg,
+            max_deviation=max_deviation,
+        )
+
+    @staticmethod
+    def _xy_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return math.hypot(b[0] - a[0], b[1] - a[1])
+
+    @staticmethod
+    def _turn_angle_deg(
+        a: tuple[float, float],
+        b: tuple[float, float],
+        c: tuple[float, float],
+    ) -> float:
+        v1x, v1y = a[0] - b[0], a[1] - b[1]
+        v2x, v2y = c[0] - b[0], c[1] - b[1]
+        n1 = math.hypot(v1x, v1y)
+        n2 = math.hypot(v2x, v2y)
+        if n1 <= 1e-15 or n2 <= 1e-15:
+            return 0.0
+        cosang = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (n1 * n2)))
+        return math.degrees(math.acos(cosang))
+
+    @staticmethod
+    def _is_colinear_chain(
+        points: list[tuple[float, float]], tol_deg: float = 3.0
+    ) -> bool:
+        if len(points) <= 2:
+            return True
+        for idx in range(1, len(points) - 1):
+            if (
+                Mesh._turn_angle_deg(
+                    points[idx - 1], points[idx], points[idx + 1]
+                )
+                > tol_deg
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _subsample_polyline_points(
+        points: list[tuple[float, float]], max_points: int = 12
+    ) -> list[tuple[float, float]]:
+        if len(points) <= max_points:
+            return points
+        indices = np.linspace(0, len(points) - 1, max_points, dtype=int)
+        out: list[tuple[float, float]] = []
+        for idx in indices:
+            pt = points[int(idx)]
+            if not out or pt != out[-1]:
+                out.append(pt)
+        return out
+
+    @staticmethod
+    def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
+        if len(chain) <= 2:
+            return 0.0
+        reference = LineString(chain)
+        simplified = LineString(
+            [chain[0], chain[-1]]
+            if Mesh._is_colinear_chain(chain)
+            else Mesh._subsample_polyline_points(chain)
+        )
+        return reference.hausdorff_distance(simplified)
+
+    @staticmethod
+    def _decompose_ring_to_chains(
+        vertices: list[tuple[float, float]],
+        settings: "Mesh.BoundarySimplifySettings",
+    ) -> list[list[tuple[float, float]]]:
+        """Merge consecutive short edges into spline/line chains on a closed ring."""
+        n = len(vertices)
+        if n < 2:
+            return []
+
+        chains: list[list[tuple[float, float]]] = []
+        edges_processed = 0
+        start = 0
+
+        while edges_processed < n:
+            j = start
+            chain = [vertices[start]]
+            total_len = 0.0
+            edge_count = 0
+
+            while True:
+                k = (j + 1) % n
+                edge_len = Mesh._xy_dist(vertices[j], vertices[k])
+
+                if edge_count > 0:
+                    if edge_len > settings.short_edge:
+                        break
+                    if total_len + edge_len > settings.cluster_span:
+                        break
+                    turn = Mesh._turn_angle_deg(
+                        vertices[(j - 1) % n], vertices[j], vertices[k]
+                    )
+                    if turn > settings.smooth_angle_deg:
+                        break
+
+                edge_count += 1
+                total_len += edge_len
+                j = k
+                chain.append(vertices[k])
+
+                if edge_count >= n:
+                    break
+
+            if edge_count >= settings.min_edges:
+                deviation = Mesh._chain_max_deviation(chain)
+                if deviation <= settings.max_deviation:
+                    chains.append(chain)
+                    edges_processed += edge_count
+                    start = j % n
+                    continue
+
+            chains.append([vertices[start], vertices[(start + 1) % n]])
+            edges_processed += 1
+            start = (start + 1) % n
+
+        return chains
+
+    @staticmethod
+    def _gmsh_add_curve_chain(
+        gmsh: Any,
+        points: list[tuple[float, float]],
+        z: float,
+        lc: float,
+    ) -> int:
+        if len(points) < 2:
+            raise ValueError("curve chain requires at least two points")
+
+        if len(points) == 2 or Mesh._is_colinear_chain(points):
+            p0 = gmsh.model.occ.addPoint(
+                float(points[0][0]), float(points[0][1]), float(z), lc
+            )
+            p1 = gmsh.model.occ.addPoint(
+                float(points[-1][0]), float(points[-1][1]), float(z), lc
+            )
+            return gmsh.model.occ.addLine(p0, p1)
+
+        spline_pts = Mesh._subsample_polyline_points(points)
+        point_tags = [
+            gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
+            for x, y in spline_pts
+        ]
+        return gmsh.model.occ.addSpline(point_tags)
+
+    @staticmethod
+    def _gmsh_add_polygon_surface(
+        gmsh: Any,
+        polygon: Polygon,
+        z: float,
+        lc: float,
+        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
+        scaled_surface_mesh_size: float | None = None,
+        mesh_scale: float = 1.0,
+    ) -> int:
+        if scaled_surface_mesh_size is None:
+            scaled_surface_mesh_size = lc
+
+        def wire_from_ring(coords: list[tuple[float, float]], reverse: bool) -> int:
+            ring = list(coords[:-1]) if len(coords) > 1 and coords[0] == coords[-1] else list(coords)
+            if reverse:
+                ring = ring[::-1]
+            if boundary_simplify is not None:
+                settings = Mesh._resolve_boundary_simplify_settings(
+                    boundary_simplify, scaled_surface_mesh_size, mesh_scale
+                )
+                chains = Mesh._decompose_ring_to_chains(ring, settings)
+            else:
+                chains = [
+                    [ring[i], ring[(i + 1) % len(ring)]]
+                    for i in range(len(ring))
+                ]
+            curves = [
+                Mesh._gmsh_add_curve_chain(gmsh, chain, z, lc) for chain in chains
+            ]
+            return gmsh.model.occ.addCurveLoop(curves)
+
+        outer = wire_from_ring(list(polygon.exterior.coords), reverse=False)
+
+        holes = []
+        for interior in polygon.interiors:
+            hole_coords = list(interior.coords)[::-1]
+            holes.append(-wire_from_ring(hole_coords, reverse=False))
+
+        return gmsh.model.occ.addPlaneSurface([outer] + holes)
+
     @staticmethod
     def _collect_qm_imprint_surfaces(design: Any) -> pd.DataFrame:
         """
@@ -1165,7 +1386,9 @@ class Mesh:
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
-        geom_tol_factor: float = 0.01):
+        geom_tol_factor: float = 0.01,
+        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
+    ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
 
@@ -1216,6 +1439,9 @@ class Mesh:
         geom_tol_factor:
             Tolerance used for face-to-polygon classification, as a fraction of
             the finest surface mesh size after scaling.
+        boundary_simplify:
+            Optional short-edge run merging for imprint polygon boundaries.
+            Experimental; use :meth:`mesh_Quantum_Metal_design_v2` for defaults.
         """
         
         import gmsh
@@ -1458,33 +1684,15 @@ class Mesh:
         z_substrate_bottom = -substrate_thickness
 
         def add_polygon_surface(polygon: Polygon, z: float, lc: float) -> int:
-            coords = list(polygon.exterior.coords)
-            points = [
-                gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
-                for x, y in coords[:-1]
-            ]
-            lines = [
-                gmsh.model.occ.addLine(points[i], points[(i + 1) % len(points)])
-                for i in range(len(points))
-            ]
-            outer = gmsh.model.occ.addCurveLoop(lines)
-
-            holes = []
-            for interior in polygon.interiors:
-                hole_coords = list(interior.coords)[::-1]
-                hole_points = [
-                    gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
-                    for x, y in hole_coords[:-1]
-                ]
-                hole_lines = [
-                    gmsh.model.occ.addLine(
-                        hole_points[i], hole_points[(i + 1) % len(hole_points)]
-                    )
-                    for i in range(len(hole_points))
-                ]
-                holes.append(-gmsh.model.occ.addCurveLoop(hole_lines))
-
-            return gmsh.model.occ.addPlaneSurface([outer] + holes)
+            return Mesh._gmsh_add_polygon_surface(
+                gmsh,
+                polygon,
+                z,
+                lc,
+                boundary_simplify=boundary_simplify,
+                scaled_surface_mesh_size=surface_mesh_size,
+                mesh_scale=mesh_scale,
+            )
 
         def split_volumes_by_z() -> tuple[list[int], list[int]]:
             substrate_volumes: list[int] = []
@@ -1535,7 +1743,11 @@ class Mesh:
             gmsh.clear()
 
         try:
-            gmsh.model.add("qiskit_metal_pure_gmsh")
+            gmsh.model.add(
+                "qiskit_metal_boundary_simplify_gmsh"
+                if boundary_simplify is not None
+                else "qiskit_metal_pure_gmsh"
+            )
 
             substrate = gmsh.model.occ.addBox(
                 xmin, ymin, z_substrate_bottom, dx, dy, substrate_thickness
@@ -1702,3 +1914,71 @@ class Mesh:
         mesh_attributes = Mesh.get_mesh_attributes(output_mesh)
         mesh_attributes = mesh_attributes.sort_values("ID")
         return mesh_attributes
+
+    @staticmethod
+    def mesh_Quantum_Metal_design_v2(
+        design: Any,
+        output_mesh: str | Path = "mesh_for_pyPalace.msh",
+        *,
+        Attributes: dict[str | tuple[int | str, str], int] | None = None,
+        substrate_thickness: float = 0.5,
+        airbox_height: float = 0.5,
+        margin: float = 0.5,
+        margin_x: float | None = None,
+        margin_y: float | None = None,
+        volume_mesh_size: float = 0.25,
+        surface_mesh_size: float = 0.02,
+        custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
+        refinement_radius: float = 0.15,
+        mesh_scale: float = 1000.0,
+        ground_plane_attr: int | str = "auto",
+        farfield_attr: int | str = "auto",
+        substrate_attr: int | str = "auto",
+        air_attr: int | str = "auto",
+        geom_tol_factor: float = 0.01,
+        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
+        simplify_min_edges: int = 10,
+        simplify_cluster_span: float | None = None,
+        simplify_short_edge: float | None = None,
+        simplify_smooth_angle_deg: float = 35.0,
+        simplify_max_deviation: float | None = None,
+    ):
+        """Experimental QM mesher with automated short-edge boundary merging.
+
+        Merges runs of many small polygon edges (circles, meander bends, rounded
+        corners) into fewer Gmsh lines/splines before imprinting. Same Palace
+        workflow as :meth:`mesh_Quantum_Metal_design`.
+
+        Advanced users may pass a full :class:`BoundarySimplifySettings` object
+        via ``boundary_simplify`` or override individual ``simplify_*`` kwargs.
+        """
+        if boundary_simplify is None:
+            boundary_simplify = Mesh.BoundarySimplifySettings(
+                min_edges=simplify_min_edges,
+                cluster_span=simplify_cluster_span,
+                short_edge=simplify_short_edge,
+                smooth_angle_deg=simplify_smooth_angle_deg,
+                max_deviation=simplify_max_deviation,
+            )
+
+        return Mesh.mesh_Quantum_Metal_design(
+            design,
+            output_mesh,
+            Attributes=Attributes,
+            substrate_thickness=substrate_thickness,
+            airbox_height=airbox_height,
+            margin=margin,
+            margin_x=margin_x,
+            margin_y=margin_y,
+            volume_mesh_size=volume_mesh_size,
+            surface_mesh_size=surface_mesh_size,
+            custom_surface_mesh=custom_surface_mesh,
+            refinement_radius=refinement_radius,
+            mesh_scale=mesh_scale,
+            ground_plane_attr=ground_plane_attr,
+            farfield_attr=farfield_attr,
+            substrate_attr=substrate_attr,
+            air_attr=air_attr,
+            geom_tol_factor=geom_tol_factor,
+            boundary_simplify=boundary_simplify,
+        )
