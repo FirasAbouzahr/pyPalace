@@ -1197,7 +1197,9 @@ class Mesh:
             Default mesh target on circuit polygon faces (metals and etch annuli).
         custom_surface_mesh:
             Optional per-surface mesh size overrides keyed like ``Attributes``.
-            Special keys ``"ground_plane"`` and ``"far_field"`` may also be set.
+            Special keys ``"ground_plane"`` and ``"far_field"`` may also be set;
+            when omitted, those surfaces do not drive a local refinement field
+            (bulk sizing uses ``volume_mesh_size`` away from circuit metals).
             Unlisted surfaces use ``surface_mesh_size``.
         refinement_radius:
             Distance over which the background field grows from the local surface
@@ -1638,17 +1640,13 @@ class Mesh:
             if gap_faces:
                 size_to_faces[surface_mesh_size].update(gap_faces)
 
-            if ground_plane_faces:
-                ground_plane_mesh_size = custom_surface_mesh.get(
-                    "ground_plane", surface_mesh_size
+            if ground_plane_faces and "ground_plane" in custom_surface_mesh:
+                size_to_faces[custom_surface_mesh["ground_plane"]].update(
+                    ground_plane_faces
                 )
-                size_to_faces[ground_plane_mesh_size].update(ground_plane_faces)
 
-            if farfield_faces:
-                farfield_mesh_size = custom_surface_mesh.get(
-                    "far_field", surface_mesh_size
-                )
-                size_to_faces[farfield_mesh_size].update(farfield_faces)
+            if farfield_faces and "far_field" in custom_surface_mesh:
+                size_to_faces[custom_surface_mesh["far_field"]].update(farfield_faces)
 
             mesh_fields: list[int] = []
             for size_min, faces in size_to_faces.items():
