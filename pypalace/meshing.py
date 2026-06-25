@@ -1114,6 +1114,37 @@ class Mesh:
         return max(Point(xy).distance(chord) for xy in chain[1:-1])
 
     @staticmethod
+    def _clean_ring_vertices(
+        vertices: list[tuple[float, float]],
+        tol: float = 1e-9,
+    ) -> list[tuple[float, float]]:
+        """Drop consecutive duplicate/near-duplicate ring vertices."""
+        if not vertices:
+            return []
+        out = [vertices[0]]
+        for point in vertices[1:]:
+            if Mesh._xy_dist(point, out[-1]) > tol:
+                out.append(point)
+        if len(out) > 1 and Mesh._xy_dist(out[0], out[-1]) <= tol:
+            out.pop()
+        return out
+
+    @staticmethod
+    def _ring_chains_are_closed(
+        chains: list[list[tuple[float, float]]],
+        tol: float = 1e-6,
+    ) -> bool:
+        if not chains:
+            return False
+        for idx, chain in enumerate(chains):
+            if len(chain) < 2:
+                return False
+            nxt = chains[(idx + 1) % len(chains)]
+            if Mesh._xy_dist(chain[-1], nxt[0]) > tol:
+                return False
+        return True
+
+    @staticmethod
     def _decompose_ring_to_chains(
         vertices: list[tuple[float, float]],
         settings: "Mesh.BoundarySimplifySettings",
@@ -1132,6 +1163,7 @@ class Mesh:
             chain = [vertices[start]]
             total_len = 0.0
             edge_count = 0
+            remaining = n - edges_processed
 
             while True:
                 k = (j + 1) % n
@@ -1153,6 +1185,9 @@ class Mesh:
                     )
                     if turn > settings.smooth_angle_deg:
                         break
+
+                if edge_count >= remaining:
+                    break
 
                 edge_count += 1
                 total_len += edge_len
@@ -1226,6 +1261,13 @@ class Mesh:
             ring = list(coords[:-1]) if len(coords) > 1 and coords[0] == coords[-1] else list(coords)
             if reverse:
                 ring = ring[::-1]
+            ring_tol = max(1e-9, finest_surface_mesh_size * 1e-6)
+            ring = Mesh._clean_ring_vertices(ring, tol=ring_tol)
+            if len(ring) < 3:
+                raise ValueError(
+                    "polygon ring has fewer than three unique vertices after cleanup"
+                )
+
             if boundary_simplify is not None:
                 settings = Mesh._resolve_boundary_simplify_settings(
                     boundary_simplify,
@@ -1234,7 +1276,12 @@ class Mesh:
                     finest_surface_mesh_size=finest_surface_mesh_size,
                 )
                 chains = Mesh._decompose_ring_to_chains(ring, settings)
-                if simplify_stats is not None:
+                if not Mesh._ring_chains_are_closed(chains, tol=ring_tol):
+                    chains = [
+                        [ring[i], ring[(i + 1) % len(ring)]]
+                        for i in range(len(ring))
+                    ]
+                elif simplify_stats is not None:
                     simplify_stats["polygon_edges"] = (
                         simplify_stats.get("polygon_edges", 0) + len(ring)
                     )
