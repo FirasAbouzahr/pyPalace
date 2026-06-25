@@ -1011,18 +1011,30 @@ class Mesh:
         settings: "Mesh.BoundarySimplifySettings",
         surface_mesh_size: float,
         mesh_scale: float,
+        finest_surface_mesh_size: float | None = None,
     ) -> "Mesh.BoundarySimplifySettings":
         """Fill automatic span/edge/deviation defaults in scaled mesh units."""
-        ten_um_design = 0.01
+        if finest_surface_mesh_size is None:
+            finest_surface_mesh_size = surface_mesh_size
+
         cluster_span = settings.cluster_span
         if cluster_span is None:
-            cluster_span = max(ten_um_design * mesh_scale, 2.0 * surface_mesh_size)
+            cluster_span = max(
+                5.0 * finest_surface_mesh_size,
+                0.1 * mesh_scale,
+            )
         short_edge = settings.short_edge
         if short_edge is None:
-            short_edge = 0.5 * surface_mesh_size
+            short_edge = max(
+                2.0 * finest_surface_mesh_size,
+                cluster_span / 4.0,
+            )
         max_deviation = settings.max_deviation
         if max_deviation is None:
-            max_deviation = 0.1 * surface_mesh_size
+            max_deviation = max(
+                0.5 * cluster_span,
+                2.0 * finest_surface_mesh_size,
+            )
         return Mesh.BoundarySimplifySettings(
             min_edges=settings.min_edges,
             cluster_span=cluster_span,
@@ -1034,6 +1046,18 @@ class Mesh:
     @staticmethod
     def _xy_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
         return math.hypot(b[0] - a[0], b[1] - a[1])
+
+    @staticmethod
+    def _deflection_angle_deg(
+        a: tuple[float, float],
+        b: tuple[float, float],
+        c: tuple[float, float],
+    ) -> float:
+        """Return how much the polyline deflects at ``b`` when walking a -> b -> c."""
+        interior = Mesh._turn_angle_deg(a, b, c)
+        if interior > 90.0:
+            return 180.0 - interior
+        return interior
 
     @staticmethod
     def _turn_angle_deg(
@@ -1084,13 +1108,10 @@ class Mesh:
     def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
         if len(chain) <= 2:
             return 0.0
-        reference = LineString(chain)
-        simplified = LineString(
-            [chain[0], chain[-1]]
-            if Mesh._is_colinear_chain(chain)
-            else Mesh._subsample_polyline_points(chain)
-        )
-        return reference.hausdorff_distance(simplified)
+        if Mesh._is_colinear_chain(chain):
+            return 0.0
+        chord = LineString([chain[0], chain[-1]])
+        return max(Point(xy).distance(chord) for xy in chain[1:-1])
 
     @staticmethod
     def _decompose_ring_to_chains(
@@ -1116,12 +1137,18 @@ class Mesh:
                 k = (j + 1) % n
                 edge_len = Mesh._xy_dist(vertices[j], vertices[k])
 
+                if edge_len > settings.short_edge:
+                    if edge_count == 0:
+                        chains.append([vertices[start], vertices[k]])
+                        edges_processed += 1
+                        start = (start + 1) % n
+                        edge_count = -1
+                    break
+
                 if edge_count > 0:
-                    if edge_len > settings.short_edge:
-                        break
                     if total_len + edge_len > settings.cluster_span:
                         break
-                    turn = Mesh._turn_angle_deg(
+                    turn = Mesh._deflection_angle_deg(
                         vertices[(j - 1) % n], vertices[j], vertices[k]
                     )
                     if turn > settings.smooth_angle_deg:
@@ -1134,6 +1161,9 @@ class Mesh:
 
                 if edge_count >= n:
                     break
+
+            if edge_count == -1:
+                continue
 
             if edge_count >= settings.min_edges:
                 deviation = Mesh._chain_max_deviation(chain)
@@ -1183,10 +1213,14 @@ class Mesh:
         lc: float,
         boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
         scaled_surface_mesh_size: float | None = None,
+        finest_surface_mesh_size: float | None = None,
         mesh_scale: float = 1.0,
+        simplify_stats: dict[str, int] | None = None,
     ) -> int:
         if scaled_surface_mesh_size is None:
             scaled_surface_mesh_size = lc
+        if finest_surface_mesh_size is None:
+            finest_surface_mesh_size = scaled_surface_mesh_size
 
         def wire_from_ring(coords: list[tuple[float, float]], reverse: bool) -> int:
             ring = list(coords[:-1]) if len(coords) > 1 and coords[0] == coords[-1] else list(coords)
@@ -1194,9 +1228,22 @@ class Mesh:
                 ring = ring[::-1]
             if boundary_simplify is not None:
                 settings = Mesh._resolve_boundary_simplify_settings(
-                    boundary_simplify, scaled_surface_mesh_size, mesh_scale
+                    boundary_simplify,
+                    scaled_surface_mesh_size,
+                    mesh_scale,
+                    finest_surface_mesh_size=finest_surface_mesh_size,
                 )
                 chains = Mesh._decompose_ring_to_chains(ring, settings)
+                if simplify_stats is not None:
+                    simplify_stats["polygon_edges"] = (
+                        simplify_stats.get("polygon_edges", 0) + len(ring)
+                    )
+                    simplify_stats["gmsh_curves"] = (
+                        simplify_stats.get("gmsh_curves", 0) + len(chains)
+                    )
+                    simplify_stats["merged_runs"] = simplify_stats.get(
+                        "merged_runs", 0
+                    ) + sum(1 for chain in chains if len(chain) > 2)
             else:
                 chains = [
                     [ring[i], ring[(i + 1) % len(ring)]]
@@ -1683,6 +1730,12 @@ class Mesh:
         dy = ymax - ymin
         z_substrate_bottom = -substrate_thickness
 
+        simplify_stats: dict[str, int] | None = (
+            {"polygon_edges": 0, "gmsh_curves": 0, "merged_runs": 0}
+            if boundary_simplify is not None
+            else None
+        )
+
         def add_polygon_surface(polygon: Polygon, z: float, lc: float) -> int:
             return Mesh._gmsh_add_polygon_surface(
                 gmsh,
@@ -1691,7 +1744,9 @@ class Mesh:
                 lc,
                 boundary_simplify=boundary_simplify,
                 scaled_surface_mesh_size=surface_mesh_size,
+                finest_surface_mesh_size=finest_surface_mesh_size,
                 mesh_scale=mesh_scale,
+                simplify_stats=simplify_stats,
             )
 
         def split_volumes_by_z() -> tuple[list[int], list[int]]:
@@ -1906,6 +1961,35 @@ class Mesh:
 
             gmsh.model.mesh.generate(3)
             gmsh.write(str(output_path))
+
+            if warnings:
+                print("USER WARNING: " + "; ".join(warnings))
+
+            if simplify_stats is not None:
+                polygon_edges = simplify_stats.get("polygon_edges", 0)
+                gmsh_curves = simplify_stats.get("gmsh_curves", 0)
+                merged_runs = simplify_stats.get("merged_runs", 0)
+                if polygon_edges > 0:
+                    resolved = Mesh._resolve_boundary_simplify_settings(
+                        boundary_simplify,
+                        surface_mesh_size,
+                        mesh_scale,
+                        finest_surface_mesh_size=finest_surface_mesh_size,
+                    )
+                    print(
+                        "boundary simplify: "
+                        f"{polygon_edges} QM polygon edges -> "
+                        f"{gmsh_curves} Gmsh curves "
+                        f"({merged_runs} merged runs; "
+                        f"short_edge={resolved.short_edge / mesh_scale:.4g} mm, "
+                        f"cluster_span={resolved.cluster_span / mesh_scale:.4g} mm)"
+                    )
+                    if merged_runs == 0:
+                        print(
+                            "USER WARNING: boundary simplify merged 0 edge runs; "
+                            "try lowering simplify_min_edges or raising "
+                            "simplify_cluster_span / simplify_short_edge."
+                        )
 
         finally:
             if owns_gmsh and gmsh.isInitialized():
