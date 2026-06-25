@@ -928,6 +928,74 @@ class Mesh:
         return mapping
 
     @staticmethod
+    def _qmetal_component_name_to_id(design: Any) -> dict[str, int]:
+        """Map QM user-facing component names to internal IDs."""
+        id_to_name = Mesh._qmetal_component_id_to_name(design)
+        return {name: comp_id for comp_id, name in id_to_name.items()}
+
+    @staticmethod
+    def _lookup_qm_surface_key(
+        mapping: Mapping[Any, Any],
+        component_id: Any,
+        surface_name: str,
+        id_to_name: dict[int, str],
+    ) -> tuple[Any | None, str | tuple[Any, str] | None]:
+        """Match a QM surface row against an Attributes/custom_surface_mesh map."""
+        comp_id = int(component_id)
+        comp_name = id_to_name.get(comp_id)
+        tuple_keys: list[tuple[Any, str]] = [(comp_id, surface_name)]
+        if comp_name is not None:
+            tuple_keys.append((comp_name, surface_name))
+        for key in tuple_keys:
+            if key in mapping:
+                return mapping[key], key
+        if surface_name in mapping:
+            return mapping[surface_name], surface_name
+        return None, None
+
+    @staticmethod
+    def _qm_surface_key_matches_row(
+        key: Any,
+        *,
+        present_id_name_pairs: set[tuple[Any, str]],
+        present_names: set[str],
+        name_to_id: dict[str, int],
+        domain_keys: frozenset[str] = frozenset(),
+    ) -> bool:
+        """Return whether a user-supplied surface key exists in the design."""
+        if key in domain_keys:
+            return True
+        if isinstance(key, str):
+            return key in present_names
+        if not isinstance(key, tuple) or len(key) != 2:
+            return False
+        comp_key, surface_name = key
+        if isinstance(comp_key, int):
+            comp_id = comp_key
+        elif isinstance(comp_key, str):
+            comp_id = name_to_id.get(comp_key)
+            if comp_id is None:
+                return False
+        else:
+            return False
+        return (comp_id, surface_name) in present_id_name_pairs
+
+    @staticmethod
+    def _qmetal_physical_surface_name(
+        component_id: Any,
+        surface_name: str,
+        key: str | tuple[Any, str] | None,
+        id_to_name: dict[int, str],
+    ) -> str:
+        """Build ``component_name_surface_name`` labels for tuple-keyed surfaces."""
+        if isinstance(key, str):
+            return surface_name
+        comp_name = id_to_name.get(int(component_id))
+        if comp_name is None:
+            comp_name = str(component_id)
+        return f"{comp_name}_{surface_name}"
+
+    @staticmethod
     def _collect_qm_imprint_surfaces(design: Any) -> pd.DataFrame:
         """
         Internal: merge QM ``poly`` rows with buffered ``path`` rows.
@@ -1082,7 +1150,7 @@ class Mesh:
         design: Any,
         output_mesh: str | Path = "mesh_for_pyPalace.msh",
         *,
-        Attributes: dict[str | tuple[str, str], int] | None = None,
+        Attributes: dict[str | tuple[int | str, str], int] | None = None,
         substrate_thickness: float = 0.5,
         airbox_height: float = 0.5,
         margin: float = 0.5,
@@ -1090,7 +1158,7 @@ class Mesh:
         margin_y: float | None = None,
         volume_mesh_size: float = 0.25,
         surface_mesh_size: float = 0.02,
-        custom_surface_mesh: dict[str | tuple[str, str], float] | None = None,
+        custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
         refinement_radius: float = 0.15,
         mesh_scale: float = 1000.0,
         ground_plane_attr: int | str = "auto",
@@ -1109,10 +1177,11 @@ class Mesh:
         output_mesh:
             Path to the ``.msh`` file to write.
         Attributes:
-            Mapping from polygon row name to Palace attribute. Keys may be either
-            ``"name"`` or ``("component", "name")`` for an exact row. Rows not in
-            this mapping are still imprinted, but receive no explicit surface
-            physical group.
+            Mapping from polygon row name to Palace attribute. Keys may be
+            ``"name"``, ``(component_id, "name")``, or ``("component_name", "name")``.
+            Rows not in this mapping are still imprinted, but receive no explicit
+            surface physical group. Tuple-keyed surfaces are named
+            ``component_name_surface_name`` in the mesh file.
         substrate_thickness, airbox_height:
             Geometry lengths in the design's units. Qiskit Metal defaults to mm.
         margin:
@@ -1127,10 +1196,9 @@ class Mesh:
         surface_mesh_size:
             Default mesh target on circuit polygon faces (metals and etch annuli).
         custom_surface_mesh:
-            Optional per-surface mesh size overrides keyed like ``Attributes``
-            (``"name"`` or ``("component", "name")``). Special keys
-            ``"ground_plane"`` and ``"far_field"`` may also be set. Unlisted
-            surfaces use ``surface_mesh_size``.
+            Optional per-surface mesh size overrides keyed like ``Attributes``.
+            Special keys ``"ground_plane"`` and ``"far_field"`` may also be set.
+            Unlisted surfaces use ``surface_mesh_size``.
         refinement_radius:
             Distance over which the background field grows from the local surface
             mesh size to ``volume_mesh_size``.
@@ -1278,6 +1346,9 @@ class Mesh:
         if "helper" in surfaces_df.columns:
             surfaces_df = surfaces_df[surfaces_df["helper"] == False]
 
+        id_to_name = Mesh._qmetal_component_id_to_name(design)
+        name_to_id = Mesh._qmetal_component_name_to_id(design)
+
         def polygons_from_geometry(geom: Any) -> list[Polygon]:
             if isinstance(geom, Polygon):
                 return [geom]
@@ -1285,23 +1356,25 @@ class Mesh:
                 return list(geom.geoms)
             return []
 
-        PolyAttributeKey = str | tuple[Any, str]
+        PolyAttributeKey = str | tuple[int | str, str]
 
         def lookup_attr(
             component: Any, name: str
         ) -> tuple[int | None, PolyAttributeKey | None]:
-            if (component, name) in Attributes:
-                return Attributes[(component, name)], (component, name)
-            if name in Attributes:
-                return Attributes[name], name
-            return None, None
+            value, key = Mesh._lookup_qm_surface_key(
+                Attributes, component, name, id_to_name
+            )
+            if value is None:
+                return None, None
+            return int(value), key
 
         def lookup_surface_mesh_size(component: Any, name: str) -> float:
-            if (component, name) in custom_surface_mesh:
-                return custom_surface_mesh[(component, name)]
-            if name in custom_surface_mesh:
-                return custom_surface_mesh[name]
-            return surface_mesh_size
+            value, _ = Mesh._lookup_qm_surface_key(
+                custom_surface_mesh, component, name, id_to_name
+            )
+            if value is None:
+                return surface_mesh_size
+            return float(value)
 
         attr_mesh_sizes: dict[int, float] = {}
         records: list[dict[str, Any]] = []
@@ -1350,19 +1423,22 @@ class Mesh:
         present_keys = {(record["component"], record["name"]) for record in records}
         present_names = {record["name"] for record in records}
         for key in Attributes:
-            if isinstance(key, tuple) and key not in present_keys:
-                warnings.append(f"Attributes key {key!r} matched no surface row")
-            elif isinstance(key, str) and key not in present_names:
+            if not Mesh._qm_surface_key_matches_row(
+                key,
+                present_id_name_pairs=present_keys,
+                present_names=present_names,
+                name_to_id=name_to_id,
+            ):
                 warnings.append(f"Attributes key {key!r} matched no surface row")
 
         for key in custom_surface_mesh:
-            if key in ("ground_plane", "far_field"):
-                continue
-            if isinstance(key, tuple) and key not in present_keys:
-                warnings.append(
-                    f"custom_surface_mesh key {key!r} matched no surface row"
-                )
-            elif isinstance(key, str) and key not in present_names:
+            if not Mesh._qm_surface_key_matches_row(
+                key,
+                present_id_name_pairs=present_keys,
+                present_names=present_names,
+                name_to_id=name_to_id,
+                domain_keys=frozenset({"ground_plane", "far_field"}),
+            ):
                 warnings.append(
                     f"custom_surface_mesh key {key!r} matched no surface row"
                 )
@@ -1528,10 +1604,11 @@ class Mesh:
 
             for record in tagged_records:
                 attr = int(record["attribute"])
-                label = (
-                    record["name"]
-                    if isinstance(record["key"], str)
-                    else f"{record['component']}__{record['name']}"
+                label = Mesh._qmetal_physical_surface_name(
+                    record["component"],
+                    record["name"],
+                    record["key"],
+                    id_to_name,
                 )
                 attr_labels.setdefault(attr, label)
                 attr_sources[attr].add((record["component"], record["name"]))
