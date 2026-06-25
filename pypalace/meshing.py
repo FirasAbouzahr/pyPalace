@@ -1481,10 +1481,20 @@ class Mesh:
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
         geom_tol_factor: float = 0.01,
+        enable_boundary_simplify: bool = True,
         boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
+        simplify_min_edges: int = 10,
+        simplify_cluster_span: float | None = None,
+        simplify_short_edge: float | None = None,
+        simplify_smooth_angle_deg: float = 35.0,
+        simplify_max_deviation: float | None = None,
     ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
+
+        Polygon boundaries are simplified by default: runs of many small QM
+        edges (circles, meander bends, fillets) are merged into fewer Gmsh
+        lines/splines before imprinting.
 
         Parameters
         ----------
@@ -1533,12 +1543,31 @@ class Mesh:
         geom_tol_factor:
             Tolerance used for face-to-polygon classification, as a fraction of
             the finest surface mesh size after scaling.
+        enable_boundary_simplify:
+            When ``True`` (default), merge short polygon edge runs before
+            imprinting. Set ``False`` to imprint one Gmsh edge per QM segment.
         boundary_simplify:
-            Optional short-edge run merging for imprint polygon boundaries.
-            Experimental; use :meth:`mesh_Quantum_Metal_design_v2` for defaults.
+            Optional full :class:`BoundarySimplifySettings` override. When
+            omitted and simplification is enabled, ``simplify_*`` kwargs set
+            the defaults.
+        simplify_min_edges, simplify_cluster_span, simplify_short_edge,
+        simplify_smooth_angle_deg, simplify_max_deviation:
+            Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
         """
         
         import gmsh
+
+        if enable_boundary_simplify:
+            if boundary_simplify is None:
+                boundary_simplify = Mesh.BoundarySimplifySettings(
+                    min_edges=simplify_min_edges,
+                    cluster_span=simplify_cluster_span,
+                    short_edge=simplify_short_edge,
+                    smooth_angle_deg=simplify_smooth_angle_deg,
+                    max_deviation=simplify_max_deviation,
+                )
+        else:
+            boundary_simplify = None
 
         surfaces_df = Mesh._collect_qm_imprint_surfaces(design).copy()
 
@@ -2045,71 +2074,3 @@ class Mesh:
         mesh_attributes = Mesh.get_mesh_attributes(output_mesh)
         mesh_attributes = mesh_attributes.sort_values("ID")
         return mesh_attributes
-
-    @staticmethod
-    def mesh_Quantum_Metal_design_v2(
-        design: Any,
-        output_mesh: str | Path = "mesh_for_pyPalace.msh",
-        *,
-        Attributes: dict[str | tuple[int | str, str], int] | None = None,
-        substrate_thickness: float = 0.5,
-        airbox_height: float = 0.5,
-        margin: float = 0.5,
-        margin_x: float | None = None,
-        margin_y: float | None = None,
-        volume_mesh_size: float = 0.25,
-        surface_mesh_size: float = 0.02,
-        custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
-        refinement_radius: float = 0.15,
-        mesh_scale: float = 1000.0,
-        ground_plane_attr: int | str = "auto",
-        farfield_attr: int | str = "auto",
-        substrate_attr: int | str = "auto",
-        air_attr: int | str = "auto",
-        geom_tol_factor: float = 0.01,
-        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
-        simplify_min_edges: int = 10,
-        simplify_cluster_span: float | None = None,
-        simplify_short_edge: float | None = None,
-        simplify_smooth_angle_deg: float = 35.0,
-        simplify_max_deviation: float | None = None,
-    ):
-        """Experimental QM mesher with automated short-edge boundary merging.
-
-        Merges runs of many small polygon edges (circles, meander bends, rounded
-        corners) into fewer Gmsh lines/splines before imprinting. Same Palace
-        workflow as :meth:`mesh_Quantum_Metal_design`.
-
-        Advanced users may pass a full :class:`BoundarySimplifySettings` object
-        via ``boundary_simplify`` or override individual ``simplify_*`` kwargs.
-        """
-        if boundary_simplify is None:
-            boundary_simplify = Mesh.BoundarySimplifySettings(
-                min_edges=simplify_min_edges,
-                cluster_span=simplify_cluster_span,
-                short_edge=simplify_short_edge,
-                smooth_angle_deg=simplify_smooth_angle_deg,
-                max_deviation=simplify_max_deviation,
-            )
-
-        return Mesh.mesh_Quantum_Metal_design(
-            design,
-            output_mesh,
-            Attributes=Attributes,
-            substrate_thickness=substrate_thickness,
-            airbox_height=airbox_height,
-            margin=margin,
-            margin_x=margin_x,
-            margin_y=margin_y,
-            volume_mesh_size=volume_mesh_size,
-            surface_mesh_size=surface_mesh_size,
-            custom_surface_mesh=custom_surface_mesh,
-            refinement_radius=refinement_radius,
-            mesh_scale=mesh_scale,
-            ground_plane_attr=ground_plane_attr,
-            farfield_attr=farfield_attr,
-            substrate_attr=substrate_attr,
-            air_attr=air_attr,
-            geom_tol_factor=geom_tol_factor,
-            boundary_simplify=boundary_simplify,
-        )
