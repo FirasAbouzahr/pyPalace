@@ -6,6 +6,7 @@ import pandas as pd
 import subprocess
 import numpy as np
 import json
+import math
 from .config import Config
 
 from collections import defaultdict
@@ -54,7 +55,8 @@ class Mesh:
 
         attributes_list = []
         attributes_dict = {"Name":[],"ID":[],"Type":[]}
-        
+
+        filename = str(filename)
         filetype = filename[-4:]
         
         if filetype == '.bdf':
@@ -927,6 +929,388 @@ class Mesh:
         return mapping
 
     @staticmethod
+    def _qmetal_component_name_to_id(design: Any) -> dict[str, int]:
+        """Map QM user-facing component names to internal IDs."""
+        id_to_name = Mesh._qmetal_component_id_to_name(design)
+        return {name: comp_id for comp_id, name in id_to_name.items()}
+
+    @staticmethod
+    def _lookup_qm_surface_key(
+        mapping: Mapping[Any, Any],
+        component_id: Any,
+        surface_name: str,
+        id_to_name: dict[int, str],
+    ) -> tuple[Any | None, str | tuple[Any, str] | None]:
+        """Match a QM surface row against an Attributes/custom_surface_mesh map."""
+        comp_id = int(component_id)
+        comp_name = id_to_name.get(comp_id)
+        tuple_keys: list[tuple[Any, str]] = [(comp_id, surface_name)]
+        if comp_name is not None:
+            tuple_keys.append((comp_name, surface_name))
+        for key in tuple_keys:
+            if key in mapping:
+                return mapping[key], key
+        if surface_name in mapping:
+            return mapping[surface_name], surface_name
+        return None, None
+
+    @staticmethod
+    def _qm_surface_key_matches_row(
+        key: Any,
+        *,
+        present_id_name_pairs: set[tuple[Any, str]],
+        present_names: set[str],
+        name_to_id: dict[str, int],
+        domain_keys: frozenset[str] = frozenset(),
+    ) -> bool:
+        """Return whether a user-supplied surface key exists in the design."""
+        if key in domain_keys:
+            return True
+        if isinstance(key, str):
+            return key in present_names
+        if not isinstance(key, tuple) or len(key) != 2:
+            return False
+        comp_key, surface_name = key
+        if isinstance(comp_key, int):
+            comp_id = comp_key
+        elif isinstance(comp_key, str):
+            comp_id = name_to_id.get(comp_key)
+            if comp_id is None:
+                return False
+        else:
+            return False
+        return (comp_id, surface_name) in present_id_name_pairs
+
+    @staticmethod
+    def _qmetal_physical_surface_name(
+        component_id: Any,
+        surface_name: str,
+        key: str | tuple[Any, str] | None,
+        id_to_name: dict[int, str],
+    ) -> str:
+        """Build ``component_name_surface_name`` labels for tuple-keyed surfaces."""
+        if isinstance(key, str):
+            return surface_name
+        comp_name = id_to_name.get(int(component_id))
+        if comp_name is None:
+            comp_name = str(component_id)
+        return f"{comp_name}_{surface_name}"
+
+    @dataclass(frozen=True)
+    class BoundarySimplifySettings:
+        """Heuristic short-edge run merging for polygon imprint boundaries."""
+
+        min_edges: int = 10
+        cluster_span: float | None = None
+        short_edge: float | None = None
+        smooth_angle_deg: float = 35.0
+        max_deviation: float | None = None
+
+    @staticmethod
+    def _resolve_boundary_simplify_settings(
+        settings: "Mesh.BoundarySimplifySettings",
+        surface_mesh_size: float,
+        mesh_scale: float,
+        finest_surface_mesh_size: float | None = None,
+    ) -> "Mesh.BoundarySimplifySettings":
+        """Fill automatic span/edge/deviation defaults in scaled mesh units."""
+        if finest_surface_mesh_size is None:
+            finest_surface_mesh_size = surface_mesh_size
+
+        cluster_span = settings.cluster_span
+        if cluster_span is None:
+            cluster_span = max(
+                5.0 * finest_surface_mesh_size,
+                0.1 * mesh_scale,
+            )
+        short_edge = settings.short_edge
+        if short_edge is None:
+            short_edge = max(
+                2.0 * finest_surface_mesh_size,
+                cluster_span / 4.0,
+            )
+        max_deviation = settings.max_deviation
+        if max_deviation is None:
+            max_deviation = max(
+                0.5 * cluster_span,
+                2.0 * finest_surface_mesh_size,
+            )
+        return Mesh.BoundarySimplifySettings(
+            min_edges=settings.min_edges,
+            cluster_span=cluster_span,
+            short_edge=short_edge,
+            smooth_angle_deg=settings.smooth_angle_deg,
+            max_deviation=max_deviation,
+        )
+
+    @staticmethod
+    def _xy_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return math.hypot(b[0] - a[0], b[1] - a[1])
+
+    @staticmethod
+    def _deflection_angle_deg(
+        a: tuple[float, float],
+        b: tuple[float, float],
+        c: tuple[float, float],
+    ) -> float:
+        """Return how much the polyline deflects at ``b`` when walking a -> b -> c."""
+        interior = Mesh._turn_angle_deg(a, b, c)
+        if interior > 90.0:
+            return 180.0 - interior
+        return interior
+
+    @staticmethod
+    def _turn_angle_deg(
+        a: tuple[float, float],
+        b: tuple[float, float],
+        c: tuple[float, float],
+    ) -> float:
+        v1x, v1y = a[0] - b[0], a[1] - b[1]
+        v2x, v2y = c[0] - b[0], c[1] - b[1]
+        n1 = math.hypot(v1x, v1y)
+        n2 = math.hypot(v2x, v2y)
+        if n1 <= 1e-15 or n2 <= 1e-15:
+            return 0.0
+        cosang = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (n1 * n2)))
+        return math.degrees(math.acos(cosang))
+
+    @staticmethod
+    def _is_colinear_chain(
+        points: list[tuple[float, float]], tol_deg: float = 3.0
+    ) -> bool:
+        if len(points) <= 2:
+            return True
+        for idx in range(1, len(points) - 1):
+            if (
+                Mesh._turn_angle_deg(
+                    points[idx - 1], points[idx], points[idx + 1]
+                )
+                > tol_deg
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _subsample_polyline_points(
+        points: list[tuple[float, float]], max_points: int = 12
+    ) -> list[tuple[float, float]]:
+        if len(points) <= max_points:
+            return points
+        indices = np.linspace(0, len(points) - 1, max_points, dtype=int)
+        out: list[tuple[float, float]] = []
+        for idx in indices:
+            pt = points[int(idx)]
+            if not out or pt != out[-1]:
+                out.append(pt)
+        return out
+
+    @staticmethod
+    def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
+        if len(chain) <= 2:
+            return 0.0
+        if Mesh._is_colinear_chain(chain):
+            return 0.0
+        chord = LineString([chain[0], chain[-1]])
+        return max(Point(xy).distance(chord) for xy in chain[1:-1])
+
+    @staticmethod
+    def _clean_ring_vertices(
+        vertices: list[tuple[float, float]],
+        tol: float = 1e-9,
+    ) -> list[tuple[float, float]]:
+        """Drop consecutive duplicate/near-duplicate ring vertices."""
+        if not vertices:
+            return []
+        out = [vertices[0]]
+        for point in vertices[1:]:
+            if Mesh._xy_dist(point, out[-1]) > tol:
+                out.append(point)
+        if len(out) > 1 and Mesh._xy_dist(out[0], out[-1]) <= tol:
+            out.pop()
+        return out
+
+    @staticmethod
+    def _ring_chains_are_closed(
+        chains: list[list[tuple[float, float]]],
+        tol: float = 1e-6,
+    ) -> bool:
+        if not chains:
+            return False
+        for idx, chain in enumerate(chains):
+            if len(chain) < 2:
+                return False
+            nxt = chains[(idx + 1) % len(chains)]
+            if Mesh._xy_dist(chain[-1], nxt[0]) > tol:
+                return False
+        return True
+
+    @staticmethod
+    def _decompose_ring_to_chains(
+        vertices: list[tuple[float, float]],
+        settings: "Mesh.BoundarySimplifySettings",
+    ) -> list[list[tuple[float, float]]]:
+        """Merge consecutive short edges into spline/line chains on a closed ring."""
+        n = len(vertices)
+        if n < 2:
+            return []
+
+        chains: list[list[tuple[float, float]]] = []
+        edges_processed = 0
+        start = 0
+
+        while edges_processed < n:
+            j = start
+            chain = [vertices[start]]
+            total_len = 0.0
+            edge_count = 0
+            remaining = n - edges_processed
+
+            while True:
+                k = (j + 1) % n
+                edge_len = Mesh._xy_dist(vertices[j], vertices[k])
+
+                if edge_len > settings.short_edge:
+                    if edge_count == 0:
+                        chains.append([vertices[start], vertices[k]])
+                        edges_processed += 1
+                        start = (start + 1) % n
+                        edge_count = -1
+                    break
+
+                if edge_count > 0:
+                    if total_len + edge_len > settings.cluster_span:
+                        break
+                    turn = Mesh._deflection_angle_deg(
+                        vertices[(j - 1) % n], vertices[j], vertices[k]
+                    )
+                    if turn > settings.smooth_angle_deg:
+                        break
+
+                if edge_count >= remaining:
+                    break
+
+                edge_count += 1
+                total_len += edge_len
+                j = k
+                chain.append(vertices[k])
+
+                if edge_count >= n:
+                    break
+
+            if edge_count == -1:
+                continue
+
+            if edge_count >= settings.min_edges:
+                deviation = Mesh._chain_max_deviation(chain)
+                if deviation <= settings.max_deviation:
+                    chains.append(chain)
+                    edges_processed += edge_count
+                    start = j % n
+                    continue
+
+            chains.append([vertices[start], vertices[(start + 1) % n]])
+            edges_processed += 1
+            start = (start + 1) % n
+
+        return chains
+
+    @staticmethod
+    def _gmsh_add_curve_chain(
+        gmsh: Any,
+        points: list[tuple[float, float]],
+        z: float,
+        lc: float,
+    ) -> int:
+        if len(points) < 2:
+            raise ValueError("curve chain requires at least two points")
+
+        if len(points) == 2 or Mesh._is_colinear_chain(points):
+            p0 = gmsh.model.occ.addPoint(
+                float(points[0][0]), float(points[0][1]), float(z), lc
+            )
+            p1 = gmsh.model.occ.addPoint(
+                float(points[-1][0]), float(points[-1][1]), float(z), lc
+            )
+            return gmsh.model.occ.addLine(p0, p1)
+
+        spline_pts = Mesh._subsample_polyline_points(points)
+        point_tags = [
+            gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
+            for x, y in spline_pts
+        ]
+        return gmsh.model.occ.addSpline(point_tags)
+
+    @staticmethod
+    def _gmsh_add_polygon_surface(
+        gmsh: Any,
+        polygon: Polygon,
+        z: float,
+        lc: float,
+        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
+        scaled_surface_mesh_size: float | None = None,
+        finest_surface_mesh_size: float | None = None,
+        mesh_scale: float = 1.0,
+        simplify_stats: dict[str, int] | None = None,
+    ) -> int:
+        if scaled_surface_mesh_size is None:
+            scaled_surface_mesh_size = lc
+        if finest_surface_mesh_size is None:
+            finest_surface_mesh_size = scaled_surface_mesh_size
+
+        def wire_from_ring(coords: list[tuple[float, float]], reverse: bool) -> int:
+            ring = list(coords[:-1]) if len(coords) > 1 and coords[0] == coords[-1] else list(coords)
+            if reverse:
+                ring = ring[::-1]
+            ring_tol = max(1e-9, finest_surface_mesh_size * 1e-6)
+            ring = Mesh._clean_ring_vertices(ring, tol=ring_tol)
+            if len(ring) < 3:
+                raise ValueError(
+                    "polygon ring has fewer than three unique vertices after cleanup"
+                )
+
+            if boundary_simplify is not None:
+                settings = Mesh._resolve_boundary_simplify_settings(
+                    boundary_simplify,
+                    scaled_surface_mesh_size,
+                    mesh_scale,
+                    finest_surface_mesh_size=finest_surface_mesh_size,
+                )
+                chains = Mesh._decompose_ring_to_chains(ring, settings)
+                if not Mesh._ring_chains_are_closed(chains, tol=ring_tol):
+                    chains = [
+                        [ring[i], ring[(i + 1) % len(ring)]]
+                        for i in range(len(ring))
+                    ]
+                elif simplify_stats is not None:
+                    simplify_stats["polygon_edges"] = (
+                        simplify_stats.get("polygon_edges", 0) + len(ring)
+                    )
+                    simplify_stats["gmsh_curves"] = (
+                        simplify_stats.get("gmsh_curves", 0) + len(chains)
+                    )
+                    simplify_stats["merged_runs"] = simplify_stats.get(
+                        "merged_runs", 0
+                    ) + sum(1 for chain in chains if len(chain) > 2)
+            else:
+                chains = [
+                    [ring[i], ring[(i + 1) % len(ring)]]
+                    for i in range(len(ring))
+                ]
+            curves = [
+                Mesh._gmsh_add_curve_chain(gmsh, chain, z, lc) for chain in chains
+            ]
+            return gmsh.model.occ.addCurveLoop(curves)
+
+        outer = wire_from_ring(list(polygon.exterior.coords), reverse=False)
+
+        holes = []
+        for interior in polygon.interiors:
+            hole_coords = list(interior.coords)[::-1]
+            holes.append(-wire_from_ring(hole_coords, reverse=False))
+
+        return gmsh.model.occ.addPlaneSurface([outer] + holes)
+
+    @staticmethod
     def _collect_qm_imprint_surfaces(design: Any) -> pd.DataFrame:
         """
         Internal: merge QM ``poly`` rows with buffered ``path`` rows.
@@ -1081,23 +1465,36 @@ class Mesh:
         design: Any,
         output_mesh: str | Path = "mesh_for_pyPalace.msh",
         *,
-        Attributes: dict[str | tuple[str, str], int] | None = None,
+        Attributes: dict[str | tuple[int | str, str], int] | None = None,
         substrate_thickness: float = 0.5,
         airbox_height: float = 0.5,
         margin: float = 0.5,
         margin_x: float | None = None,
         margin_y: float | None = None,
-        volume_mesh_size: float = 0.1,
-        surface_mesh_size: float = 0.005,
-        refinement_radius: float = 0.05,
+        volume_mesh_size: float = 0.25,
+        surface_mesh_size: float = 0.02,
+        custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
+        refinement_radius: float = 0.15,
         mesh_scale: float = 1000.0,
         ground_plane_attr: int | str = "auto",
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
-        geom_tol_factor: float = 0.01):
+        geom_tol_factor: float = 0.01,
+        enable_boundary_simplify: bool = True,
+        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
+        simplify_min_edges: int = 10,
+        simplify_cluster_span: float | None = None,
+        simplify_short_edge: float | None = None,
+        simplify_smooth_angle_deg: float = 35.0,
+        simplify_max_deviation: float | None = None,
+    ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
+
+        Polygon boundaries are simplified by default: runs of many small QM
+        edges (circles, meander bends, fillets) are merged into fewer Gmsh
+        lines/splines before imprinting.
 
         Parameters
         ----------
@@ -1107,10 +1504,11 @@ class Mesh:
         output_mesh:
             Path to the ``.msh`` file to write.
         Attributes:
-            Mapping from polygon row name to Palace attribute. Keys may be either
-            ``"name"`` or ``("component", "name")`` for an exact row. Rows not in
-            this mapping are still imprinted, but receive no explicit surface
-            physical group.
+            Mapping from polygon row name to Palace attribute. Keys may be
+            ``"name"``, ``(component_id, "name")``, or ``("component_name", "name")``.
+            Rows not in this mapping are still imprinted, but receive no explicit
+            surface physical group. Tuple-keyed surfaces are named
+            ``component_name_surface_name`` in the mesh file.
         substrate_thickness, airbox_height:
             Geometry lengths in the design's units. Qiskit Metal defaults to mm.
         margin:
@@ -1120,12 +1518,19 @@ class Mesh:
             Padding in x and y added to the layout bounding box before building
             the substrate and air box. Default to ``margin`` when omitted.
         volume_mesh_size:
-            Bulk mesh target in design units.
+            Bulk mesh target in design units. Default is coarse; Palace AMR can
+            refine further during the solve.
         surface_mesh_size:
-            Mesh target on every circuit polygon face (metals and etch annuli).
+            Default mesh target on circuit polygon faces (metals and etch annuli).
+        custom_surface_mesh:
+            Optional per-surface mesh size overrides keyed like ``Attributes``.
+            Special keys ``"ground_plane"`` and ``"far_field"`` may also be set;
+            when omitted, those surfaces do not drive a local refinement field
+            (bulk sizing uses ``volume_mesh_size`` away from circuit metals).
+            Unlisted surfaces use ``surface_mesh_size``.
         refinement_radius:
-            Distance over which the background field grows from
-            ``surface_mesh_size`` to ``volume_mesh_size``.
+            Distance over which the background field grows from the local surface
+            mesh size to ``volume_mesh_size``.
         mesh_scale:
             Multiplies all design coordinates before writing the mesh. If the
             design is in mm and Palace uses ``L0 = 1e-6`` (one mesh unit is one
@@ -1137,10 +1542,32 @@ class Mesh:
             Volume physical-group attributes.
         geom_tol_factor:
             Tolerance used for face-to-polygon classification, as a fraction of
-            ``surface_mesh_size`` after scaling.
+            the finest surface mesh size after scaling.
+        enable_boundary_simplify:
+            When ``True`` (default), merge short polygon edge runs before
+            imprinting. Set ``False`` to imprint one Gmsh edge per QM segment.
+        boundary_simplify:
+            Optional full :class:`BoundarySimplifySettings` override. When
+            omitted and simplification is enabled, ``simplify_*`` kwargs set
+            the defaults.
+        simplify_min_edges, simplify_cluster_span, simplify_short_edge,
+        simplify_smooth_angle_deg, simplify_max_deviation:
+            Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
         """
         
         import gmsh
+
+        if enable_boundary_simplify:
+            if boundary_simplify is None:
+                boundary_simplify = Mesh.BoundarySimplifySettings(
+                    min_edges=simplify_min_edges,
+                    cluster_span=simplify_cluster_span,
+                    short_edge=simplify_short_edge,
+                    smooth_angle_deg=simplify_smooth_angle_deg,
+                    max_deviation=simplify_max_deviation,
+                )
+        else:
+            boundary_simplify = None
 
         surfaces_df = Mesh._collect_qm_imprint_surfaces(design).copy()
 
@@ -1211,6 +1638,7 @@ class Mesh:
             print(f"{num_to_repair} geometry component(s) sucessfully repaired")
 
         Attributes = dict(Attributes or {})
+        custom_surface_mesh = dict(custom_surface_mesh or {})
         output_path = Path(output_mesh)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1236,8 +1664,18 @@ class Mesh:
             surface_mesh_size * mesh_scale,
             refinement_radius * mesh_scale,
         )
+        custom_surface_mesh = {
+            key: float(value) * mesh_scale
+            for key, value in custom_surface_mesh.items()
+        }
 
-        geom_tol = max(1e-12, geom_tol_factor * surface_mesh_size)
+        finest_surface_mesh_size = surface_mesh_size
+        if len(custom_surface_mesh) != 0:
+            finest_surface_mesh_size = min(
+                [surface_mesh_size] + list(custom_surface_mesh.values())
+            )
+
+        geom_tol = max(1e-12, geom_tol_factor * finest_surface_mesh_size)
         design_unit_to_meters = Mesh._qmetal_design_unit_to_meters(design)
         l0_meters = design_unit_to_meters / mesh_scale
 
@@ -1259,6 +1697,9 @@ class Mesh:
         if "helper" in surfaces_df.columns:
             surfaces_df = surfaces_df[surfaces_df["helper"] == False]
 
+        id_to_name = Mesh._qmetal_component_id_to_name(design)
+        name_to_id = Mesh._qmetal_component_name_to_id(design)
+
         def polygons_from_geometry(geom: Any) -> list[Polygon]:
             if isinstance(geom, Polygon):
                 return [geom]
@@ -1266,23 +1707,42 @@ class Mesh:
                 return list(geom.geoms)
             return []
 
-        PolyAttributeKey = str | tuple[Any, str]
+        PolyAttributeKey = str | tuple[int | str, str]
 
         def lookup_attr(
             component: Any, name: str
         ) -> tuple[int | None, PolyAttributeKey | None]:
-            if (component, name) in Attributes:
-                return Attributes[(component, name)], (component, name)
-            if name in Attributes:
-                return Attributes[name], name
-            return None, None
+            value, key = Mesh._lookup_qm_surface_key(
+                Attributes, component, name, id_to_name
+            )
+            if value is None:
+                return None, None
+            return int(value), key
 
+        def lookup_surface_mesh_size(component: Any, name: str) -> float:
+            value, _ = Mesh._lookup_qm_surface_key(
+                custom_surface_mesh, component, name, id_to_name
+            )
+            if value is None:
+                return surface_mesh_size
+            return float(value)
+
+        attr_mesh_sizes: dict[int, float] = {}
         records: list[dict[str, Any]] = []
         for _, row in surfaces_df.iterrows():
             name = str(row["name"])
             component = row["component"]
             attr, key = lookup_attr(component, name)
             is_subtract = bool(row["subtract"])
+            mesh_lc = lookup_surface_mesh_size(component, name)
+            if attr != None:
+                attr = int(attr)
+                if attr in attr_mesh_sizes and attr_mesh_sizes[attr] != mesh_lc:
+                    raise ValueError(
+                        f"Conflicting custom_surface_mesh for attribute {attr}: "
+                        f"{attr_mesh_sizes[attr]:g} vs {mesh_lc:g} on {name!r}."
+                    )
+                attr_mesh_sizes[attr] = mesh_lc
 
             for polygon in polygons_from_geometry(row["geometry"]):
                 if mesh_scale != 1.0:
@@ -1300,6 +1760,7 @@ class Mesh:
                         "subtract": is_subtract,
                         "attribute": attr,
                         "key": key,
+                        "mesh_lc": mesh_lc,
                     }
                 )
 
@@ -1313,10 +1774,25 @@ class Mesh:
         present_keys = {(record["component"], record["name"]) for record in records}
         present_names = {record["name"] for record in records}
         for key in Attributes:
-            if isinstance(key, tuple) and key not in present_keys:
+            if not Mesh._qm_surface_key_matches_row(
+                key,
+                present_id_name_pairs=present_keys,
+                present_names=present_names,
+                name_to_id=name_to_id,
+            ):
                 warnings.append(f"Attributes key {key!r} matched no surface row")
-            elif isinstance(key, str) and key not in present_names:
-                warnings.append(f"Attributes key {key!r} matched no surface row")
+
+        for key in custom_surface_mesh:
+            if not Mesh._qm_surface_key_matches_row(
+                key,
+                present_id_name_pairs=present_keys,
+                present_names=present_names,
+                name_to_id=name_to_id,
+                domain_keys=frozenset({"ground_plane", "far_field"}),
+            ):
+                warnings.append(
+                    f"custom_surface_mesh key {key!r} matched no surface row"
+                )
 
         tagged_records = [record for record in records if record["attribute"] is not None]
 
@@ -1330,34 +1806,24 @@ class Mesh:
         dy = ymax - ymin
         z_substrate_bottom = -substrate_thickness
 
+        simplify_stats: dict[str, int] | None = (
+            {"polygon_edges": 0, "gmsh_curves": 0, "merged_runs": 0}
+            if boundary_simplify is not None
+            else None
+        )
+
         def add_polygon_surface(polygon: Polygon, z: float, lc: float) -> int:
-            coords = list(polygon.exterior.coords)
-            points = [
-                gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
-                for x, y in coords[:-1]
-            ]
-            lines = [
-                gmsh.model.occ.addLine(points[i], points[(i + 1) % len(points)])
-                for i in range(len(points))
-            ]
-            outer = gmsh.model.occ.addCurveLoop(lines)
-
-            holes = []
-            for interior in polygon.interiors:
-                hole_coords = list(interior.coords)[::-1]
-                hole_points = [
-                    gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
-                    for x, y in hole_coords[:-1]
-                ]
-                hole_lines = [
-                    gmsh.model.occ.addLine(
-                        hole_points[i], hole_points[(i + 1) % len(hole_points)]
-                    )
-                    for i in range(len(hole_points))
-                ]
-                holes.append(-gmsh.model.occ.addCurveLoop(hole_lines))
-
-            return gmsh.model.occ.addPlaneSurface([outer] + holes)
+            return Mesh._gmsh_add_polygon_surface(
+                gmsh,
+                polygon,
+                z,
+                lc,
+                boundary_simplify=boundary_simplify,
+                scaled_surface_mesh_size=surface_mesh_size,
+                finest_surface_mesh_size=finest_surface_mesh_size,
+                mesh_scale=mesh_scale,
+                simplify_stats=simplify_stats,
+            )
 
         def split_volumes_by_z() -> tuple[list[int], list[int]]:
             substrate_volumes: list[int] = []
@@ -1408,7 +1874,11 @@ class Mesh:
             gmsh.clear()
 
         try:
-            gmsh.model.add("qiskit_metal_pure_gmsh")
+            gmsh.model.add(
+                "qiskit_metal_boundary_simplify_gmsh"
+                if boundary_simplify is not None
+                else "qiskit_metal_pure_gmsh"
+            )
 
             substrate = gmsh.model.occ.addBox(
                 xmin, ymin, z_substrate_bottom, dx, dy, substrate_thickness
@@ -1417,7 +1887,7 @@ class Mesh:
 
             for record in records:
                 record["surface_tag"] = add_polygon_surface(
-                    record["polygon"], z=0.0, lc=surface_mesh_size
+                    record["polygon"], z=0.0, lc=record["mesh_lc"]
                 )
             surface_tags = [record["surface_tag"] for record in records]
 
@@ -1479,10 +1949,11 @@ class Mesh:
 
             for record in tagged_records:
                 attr = int(record["attribute"])
-                label = (
-                    record["name"]
-                    if isinstance(record["key"], str)
-                    else f"{record['component']}__{record['name']}"
+                label = Mesh._qmetal_physical_surface_name(
+                    record["component"],
+                    record["name"],
+                    record["key"],
+                    id_to_name,
                 )
                 attr_labels.setdefault(attr, label)
                 attr_sources[attr].add((record["component"], record["name"]))
@@ -1506,30 +1977,57 @@ class Mesh:
             else:
                 warnings.append("no far_field faces were identified")
 
-            poly_faces: set[int] = set()
-            for faces in attr_to_faces.values():
-                poly_faces.update(faces)
-            poly_faces.update(gap_faces)
+            size_to_faces: dict[float, set[int]] = defaultdict(set)
+            for attr, faces in attr_to_faces.items():
+                size_to_faces[attr_mesh_sizes[attr]].update(faces)
+            if gap_faces:
+                size_to_faces[surface_mesh_size].update(gap_faces)
 
-            if poly_faces:
+            if ground_plane_faces and "ground_plane" in custom_surface_mesh:
+                size_to_faces[custom_surface_mesh["ground_plane"]].update(
+                    ground_plane_faces
+                )
+
+            if farfield_faces and "far_field" in custom_surface_mesh:
+                size_to_faces[custom_surface_mesh["far_field"]].update(farfield_faces)
+
+            mesh_fields: list[int] = []
+            for size_min, faces in size_to_faces.items():
+                if not faces:
+                    continue
                 dist_field = gmsh.model.mesh.field.add("Distance")
                 gmsh.model.mesh.field.setNumbers(
-                    dist_field, "SurfacesList", sorted(poly_faces)
+                    dist_field, "SurfacesList", sorted(faces)
                 )
                 gmsh.model.mesh.field.setNumber(dist_field, "Sampling", 100)
 
                 thresh_field = gmsh.model.mesh.field.add("Threshold")
                 gmsh.model.mesh.field.setNumber(thresh_field, "InField", dist_field)
-                gmsh.model.mesh.field.setNumber(thresh_field, "SizeMin", surface_mesh_size)
-                gmsh.model.mesh.field.setNumber(thresh_field, "SizeMax", volume_mesh_size)
+                gmsh.model.mesh.field.setNumber(thresh_field, "SizeMin", size_min)
+                gmsh.model.mesh.field.setNumber(
+                    thresh_field, "SizeMax", volume_mesh_size
+                )
                 gmsh.model.mesh.field.setNumber(thresh_field, "DistMin", 0.0)
-                gmsh.model.mesh.field.setNumber(thresh_field, "DistMax", refinement_radius)
-                gmsh.model.mesh.field.setAsBackgroundMesh(thresh_field)
+                gmsh.model.mesh.field.setNumber(
+                    thresh_field, "DistMax", refinement_radius
+                )
+                mesh_fields.append(thresh_field)
+
+            if len(mesh_fields) == 1:
+                gmsh.model.mesh.field.setAsBackgroundMesh(mesh_fields[0])
+            elif len(mesh_fields) > 1:
+                min_field = gmsh.model.mesh.field.add("Min")
+                gmsh.model.mesh.field.setNumbers(
+                    min_field, "FieldsList", mesh_fields
+                )
+                gmsh.model.mesh.field.setAsBackgroundMesh(min_field)
 
             gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
             gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
             gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
-            gmsh.option.setNumber("Mesh.CharacteristicLengthMin", surface_mesh_size)
+            gmsh.option.setNumber(
+                "Mesh.CharacteristicLengthMin", finest_surface_mesh_size
+            )
             gmsh.option.setNumber("Mesh.CharacteristicLengthMax", volume_mesh_size)
             gmsh.option.setNumber("Mesh.ElementOrder", 1)
             gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
@@ -1539,6 +2037,35 @@ class Mesh:
 
             gmsh.model.mesh.generate(3)
             gmsh.write(str(output_path))
+
+            if warnings:
+                print("USER WARNING: " + "; ".join(warnings))
+
+            if simplify_stats is not None:
+                polygon_edges = simplify_stats.get("polygon_edges", 0)
+                gmsh_curves = simplify_stats.get("gmsh_curves", 0)
+                merged_runs = simplify_stats.get("merged_runs", 0)
+                if polygon_edges > 0:
+                    resolved = Mesh._resolve_boundary_simplify_settings(
+                        boundary_simplify,
+                        surface_mesh_size,
+                        mesh_scale,
+                        finest_surface_mesh_size=finest_surface_mesh_size,
+                    )
+                    print(
+                        "boundary simplify: "
+                        f"{polygon_edges} QM polygon edges -> "
+                        f"{gmsh_curves} Gmsh curves "
+                        f"({merged_runs} merged runs; "
+                        f"short_edge={resolved.short_edge / mesh_scale:.4g} mm, "
+                        f"cluster_span={resolved.cluster_span / mesh_scale:.4g} mm)"
+                    )
+                    if merged_runs == 0:
+                        print(
+                            "USER WARNING: boundary simplify merged 0 edge runs; "
+                            "try lowering simplify_min_edges or raising "
+                            "simplify_cluster_span / simplify_short_edge."
+                        )
 
         finally:
             if owns_gmsh and gmsh.isInitialized():
