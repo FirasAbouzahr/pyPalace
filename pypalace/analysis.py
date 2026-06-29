@@ -398,7 +398,8 @@ class resonator_analysis:
         -------
         dict
             ``frequency_GHz``, ``kappa_kHz``, ``frequency_dip_GHz``,
-            ``fit_rmse`` (IQ residual), and ``fit_rmse_db`` (|S21| residual).
+            ``frequency_step_kHz``, ``fit_rmse`` (IQ residual), and
+            ``fit_rmse_db`` (|S21| residual).
 
         Raises
         ------
@@ -419,6 +420,7 @@ class resonator_analysis:
             rmse,
             f_dip,
             rmse_db,
+            df_min,
         ) = DCM_backend.DCM_fit(S_ij, auto_trim=auto_trim, min_points=min_points)
 
         if show or save is not None:
@@ -457,6 +459,7 @@ class resonator_analysis:
             "frequency_GHz": f0_fit / 1e9,
             "kappa_kHz": kappa_fit / 1e3,
             "frequency_dip_GHz": f_dip / 1e9,
+            "frequency_step_kHz": df_min / 1e3,
             "fit_rmse": rmse,
             "fit_rmse_db": rmse_db,
         }

@@ -50,15 +50,34 @@ class DCM_backend:
         return f_ghz[order] * 1e9, mag_db[order], phase_deg[order]
 
     @staticmethod
+    def _frequency_step_hz(f: np.ndarray) -> float:
+        if len(f) < 2:
+            return 1e6
+        return float(np.min(np.diff(f)))
+
+    @staticmethod
     def _kappa_guess_from_mag(f: np.ndarray, mag_db: np.ndarray) -> float:
         """Rough linewidth (Hz) from |S21| half-max width."""
         f0_idx = int(np.argmin(mag_db))
         n_edge = max(2, len(mag_db) // 10)
         baseline = float(np.median(np.r_[mag_db[:n_edge], mag_db[-n_edge:]]))
         half = 0.5 * (baseline + float(mag_db[f0_idx]))
-        below = np.where(mag_db < half)[0]
-        df_min = float(np.min(np.diff(f))) if len(f) > 1 else 1e6
+        df_min = DCM_backend._frequency_step_hz(f)
 
+        crossings: list[float] = []
+        for idx in range(len(f) - 1):
+            y0 = float(mag_db[idx] - half)
+            y1 = float(mag_db[idx + 1] - half)
+            if y0 == 0.0:
+                crossings.append(float(f[idx]))
+            elif y0 * y1 < 0.0:
+                frac = y0 / (y0 - y1)
+                crossings.append(float(f[idx] + frac * (f[idx + 1] - f[idx])))
+
+        if len(crossings) >= 2:
+            return max(float(max(crossings) - min(crossings)), df_min)
+
+        below = np.where(mag_db < half)[0]
         if len(below) >= 2:
             return max(float(f[below[-1]] - f[below[0]]), df_min)
 
@@ -101,7 +120,7 @@ class DCM_backend:
         f0_idx = int(np.argmin(mag_db))
         f0_guess = float(f[f0_idx])
         f_span = float(f[-1] - f[0])
-        df_min = float(np.min(np.diff(f))) if len(f) > 1 else 1e6
+        df_min = DCM_backend._frequency_step_hz(f)
         kappa_guess = float(
             np.clip(DCM_backend._kappa_guess_from_mag(f, mag_db), df_min, max(f_span, df_min))
         )
@@ -136,9 +155,15 @@ class DCM_backend:
             rmse_db = float(
                 np.sqrt(np.mean((20 * np.log10(np.maximum(np.abs(pred), 1e-30)) - mag_db) ** 2))
             )
-            at_kappa_bound = kappa_fit >= 0.99 * upper[4]
+            at_kappa_upper = kappa_fit >= 0.99 * upper[4]
+            at_kappa_lower = kappa_fit <= 1.05 * df_min
             f0_penalty = abs(f0_fit - f0_guess) / max(f_span, df_min)
-            score = rmse_db + 5.0 * float(at_kappa_bound) + f0_penalty
+            score = (
+                rmse_db
+                + 5.0 * float(at_kappa_upper)
+                + 5.0 * float(at_kappa_lower)
+                + f0_penalty
+            )
 
             if best is None or score < best[8]:
                 best = (
@@ -173,9 +198,12 @@ class DCM_backend:
         f0_fit: float,
         kappa_fit: float,
         rmse_db: float,
+        df_min: float | None = None,
     ) -> None:
         f_dip = float(f[int(np.argmin(mag_db))])
         f_span = float(f[-1] - f[0])
+        if df_min is None:
+            df_min = DCM_backend._frequency_step_hz(f)
 
         if f_span <= 0:
             raise ValueError("S_ij frequency column must span more than one distinct point.")
@@ -185,6 +213,14 @@ class DCM_backend:
                 f"DCM fit failed sanity check: f0_fit={f0_fit/1e9:.6f} GHz but "
                 f"|S21| dip is at {f_dip/1e9:.6f} GHz. Narrow MinFreq/MaxFreq "
                 f"around the resonance and reduce FreqStep."
+            )
+
+        if df_min > 0 and kappa_fit <= 1.05 * df_min:
+            raise ValueError(
+                f"DCM fit pinned kappa to the frequency-grid limit "
+                f"({kappa_fit/1e3:.3f} kHz; FreqStep≈{df_min/1e3:.3f} kHz). "
+                f"Use a finer FreqStep and narrow MinFreq/MaxFreq so several "
+                f"points sample the linewidth (see Example 03)."
             )
 
         q_loaded = f0_fit / kappa_fit if kappa_fit > 0 else 0.0
@@ -216,6 +252,7 @@ class DCM_backend:
 
         S21_complex = (10 ** (mag_db / 20.0)) * np.exp(1j * np.deg2rad(phase_deg))
         f_dip = float(f[int(np.argmin(mag_db))])
+        df_min = DCM_backend._frequency_step_hz(f)
 
         (
             f0_fit,
@@ -228,7 +265,9 @@ class DCM_backend:
             iq_rmse,
         ) = DCM_backend._fit_dcm_complex(f, S21_complex, mag_db)
 
-        DCM_backend._validate_fit(f, mag_db, f0_fit, kappa_fit, rmse_db)
+        DCM_backend._validate_fit(
+            f, mag_db, f0_fit, kappa_fit, rmse_db, df_min=df_min
+        )
 
         return (
             f0_fit,
@@ -242,4 +281,5 @@ class DCM_backend:
             iq_rmse,
             f_dip,
             rmse_db,
+            df_min,
         )
