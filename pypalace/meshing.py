@@ -23,16 +23,18 @@ class Mesh:
 
     _PLOT_MESH_SKIP_LABELS = frozenset({"air", "substrate"})
     _PLOT_MESH_COLORS = (
-        "#2196F3",  # bright blue
-        "#4CAF50",  # bright green
-        "#F44336",  # bright red
-        "#03A9F4",  # sky blue
-        "#66BB6A",  # light green
-        "#EF5350",  # light red
-        "#1565C0",  # vivid blue
-        "#2E7D32",  # green
-        "#D32F2F",  # red
-        "#00B0FF",  # azure
+        "#4E79A7",  # blue
+        "#F28E2B",  # orange
+        "#E15759",  # red
+        "#76B7B2",  # teal
+        "#59A14F",  # green
+        "#EDC948",  # yellow
+        "#B07AA1",  # purple
+        "#FF9DA7",  # pink
+        "#9C755F",  # brown
+        "#BAB0AC",  # gray
+        "#86BCB6",  # mint
+        "#D37295",  # magenta
     )
     
     @staticmethod
@@ -312,6 +314,80 @@ class Mesh:
                 add_tri(phys, (nids[face[0]], nids[face[1]], nids[face[2]]))
 
         return out
+
+    @staticmethod
+    def _quantize_plot_xy(
+        point: np.ndarray | tuple[float, float], tol: float
+    ) -> tuple[float, float]:
+        if tol <= 0:
+            tol = 1e-12
+        return (
+            round(float(point[0]) / tol) * tol,
+            round(float(point[1]) / tol) * tol,
+        )
+
+    @staticmethod
+    def _plot_mesh_edge_key(
+        p0: np.ndarray, p1: np.ndarray, tol: float
+    ) -> tuple[tuple[float, float], tuple[float, float]]:
+        a = Mesh._quantize_plot_xy(p0, tol)
+        b = Mesh._quantize_plot_xy(p1, tol)
+        return (a, b) if a <= b else (b, a)
+
+    @staticmethod
+    def _plot_mesh_adjacency(
+        groups: dict[int, list[np.ndarray]], tol: float
+    ) -> dict[int, set[int]]:
+        """Build adjacency from shared triangle edges on the cut plane."""
+        edge_phys: dict[tuple[tuple[float, float], tuple[float, float]], set[int]] = (
+            defaultdict(set)
+        )
+        for phys, polys in groups.items():
+            for tri in polys:
+                for idx in range(3):
+                    edge_phys[
+                        Mesh._plot_mesh_edge_key(
+                            tri[idx], tri[(idx + 1) % 3], tol
+                        )
+                    ].add(int(phys))
+
+        adjacency: dict[int, set[int]] = defaultdict(set)
+        for phys_set in edge_phys.values():
+            if len(phys_set) < 2:
+                continue
+            for phys_a in phys_set:
+                for phys_b in phys_set:
+                    if phys_a != phys_b:
+                        adjacency[phys_a].add(phys_b)
+        return adjacency
+
+    @staticmethod
+    def _plot_mesh_group_colors(
+        phys_ids: list[int], adjacency: dict[int, set[int]]
+    ) -> dict[int, str]:
+        """Greedy graph coloring so touching groups get distinct hues."""
+        palette = Mesh._PLOT_MESH_COLORS
+        colors: dict[int, str] = {}
+        order = sorted(
+            phys_ids,
+            key=lambda phys: (-len(adjacency.get(phys, set())), phys),
+        )
+        for phys in order:
+            used = {colors[neighbor] for neighbor in adjacency.get(phys, set()) if neighbor in colors}
+            for color in palette:
+                if color not in used:
+                    colors[phys] = color
+                    break
+            else:
+                colors[phys] = palette[len(colors) % len(palette)]
+        return colors
+
+    @staticmethod
+    def _plot_mesh_group_areas(groups: dict[int, list[np.ndarray]]) -> dict[int, float]:
+        return {
+            phys: float(sum(Mesh._triangle_area_2d(tri) for tri in polys))
+            for phys, polys in groups.items()
+        }
 
     @staticmethod
     def _triangle_area_2d(tri: np.ndarray) -> float:
@@ -682,13 +758,17 @@ class Mesh:
             xmin, xmax, ymin, ymax = full_bounds
 
         fig, ax = plt.subplots()
-        colors = Mesh._PLOT_MESH_COLORS
         phys_ids = sorted(groups.keys())
+        edge_tol = max(1e-9, 1e-6 * max(full_xmax - full_xmin, full_ymax - full_ymin, 1e-9))
+        adjacency = Mesh._plot_mesh_adjacency(groups, edge_tol)
+        color_by_phys = Mesh._plot_mesh_group_colors(phys_ids, adjacency)
+        areas = Mesh._plot_mesh_group_areas(groups)
+        draw_order = sorted(phys_ids, key=lambda phys: areas.get(phys, 0.0), reverse=True)
         label_specs: list[tuple[np.ndarray, str]] = []
 
-        for idx, phys in enumerate(phys_ids):
+        for phys in draw_order:
             polys = groups[phys]
-            color = colors[idx % len(colors)]
+            color = color_by_phys[phys]
             ax.add_collection(
                 PolyCollection(
                     polys,
