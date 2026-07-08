@@ -1991,6 +1991,7 @@ class Mesh:
             records_by_area = sorted(records, key=lambda record: record["polygon"].area)
 
             attr_to_faces: dict[int, set[int]] = defaultdict(set)
+            untagged_size_to_faces: dict[float, set[int]] = defaultdict(set)
             ground_plane_faces: set[int] = set()
             gap_faces: set[int] = set()
 
@@ -2013,6 +2014,7 @@ class Mesh:
                     attr_to_faces[int(matched_record["attribute"])].add(tag)
                 else:
                     gap_faces.add(tag)
+                    untagged_size_to_faces[float(matched_record["mesh_lc"])].add(tag)
 
             farfield_faces = sorted({tag for _, tag in outer})
 
@@ -2061,7 +2063,11 @@ class Mesh:
             for attr, faces in attr_to_faces.items():
                 size_to_faces[attr_mesh_sizes[attr]].update(faces)
             if gap_faces:
-                size_to_faces[surface_mesh_size].update(gap_faces)
+                if untagged_size_to_faces:
+                    for size_min, faces in untagged_size_to_faces.items():
+                        size_to_faces[size_min].update(faces)
+                else:
+                    size_to_faces[surface_mesh_size].update(gap_faces)
 
             if ground_plane_faces and "ground_plane" in custom_surface_mesh:
                 size_to_faces[custom_surface_mesh["ground_plane"]].update(
