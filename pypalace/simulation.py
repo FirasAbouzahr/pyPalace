@@ -207,7 +207,7 @@ class Simulation:
                 Cig = -row.sum()
                 ground_elements.append(Cig)
 
-            ground_row = ground_elements + [0]
+            ground_row = ground_elements + [-sum(ground_elements)]
             
             ## add ground elements to matrix ##
             cap_matrix["ground"] = ground_elements
