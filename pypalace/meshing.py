@@ -1083,6 +1083,10 @@ class Mesh:
         Merges runs of tiny QM edges into fewer Gmsh curves (meanders, fillets)
         while enforcing a hard emission-fidelity policy: multi-point runs keep
         every vertex and are never replaced by an endpoint chord or cubic spline.
+
+        Leftover short runs shorter than ``min_edges`` but at least
+        ``min_remnant_edges`` long are still merged (aggressive remnant pack)
+        so fillet crumbs do not force hypermesh nodes.
         """
 
         min_edges: int = 10
@@ -1091,7 +1095,8 @@ class Mesh:
         smooth_angle_deg: float = 35.0
         max_deviation: float | None = None
         fidelity_tol: float | None = None
-        max_cumulative_turn_deg: float = 60.0
+        max_cumulative_turn_deg: float = 90.0
+        min_remnant_edges: int = 2
 
     @staticmethod
     def _resolve_boundary_simplify_settings(
@@ -1136,6 +1141,7 @@ class Mesh:
             max_deviation=max_deviation,
             fidelity_tol=fidelity_tol,
             max_cumulative_turn_deg=settings.max_cumulative_turn_deg,
+            min_remnant_edges=max(2, int(settings.min_remnant_edges)),
         )
 
     @staticmethod
@@ -1345,7 +1351,7 @@ class Mesh:
         chains: list[list[tuple[float, float]]] = []
         edges_processed = 0
         start = 0
-        min_curved_edges = 3
+        min_remnant_edges = max(2, int(settings.min_remnant_edges))
 
         while edges_processed < n:
             j = start
@@ -1403,17 +1409,11 @@ class Mesh:
             if edge_count >= settings.min_edges:
                 deviation = Mesh._chain_max_deviation(chain)
                 accept_merge = deviation <= settings.max_deviation
-            elif edge_count >= min_curved_edges:
-                # Short curved remnants (e.g. coupler tips): still merge to
-                # avoid hypermeshing tiny fillet edges.
-                fidelity_tol = (
-                    settings.fidelity_tol
-                    if settings.fidelity_tol is not None
-                    else 0.0
-                )
-                accept_merge = (
-                    Mesh._chain_sagitta(chain) > fidelity_tol
-                )
+            elif edge_count >= min_remnant_edges:
+                # Aggressive remnant merge: any leftover multi-edge short run
+                # (including near-flat fillet crumbs that still hypermesh).
+                # Strict emission keeps every vertex, so this is geometry-safe.
+                accept_merge = True
 
             if accept_merge:
                 if Mesh._chain_merge_is_faithful(chain, settings):
@@ -1751,6 +1751,8 @@ class Mesh:
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
         simplify_fidelity_tol: float | None = None,
+        simplify_max_cumulative_turn_deg: float = 90.0,
+        simplify_min_remnant_edges: int = 2,
     ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
@@ -1818,8 +1820,11 @@ class Mesh:
             Max allowed emission error for merged runs, in design units
             (mm by default). Used when validating / splitting bad merges.
         simplify_min_edges, simplify_cluster_span, simplify_short_edge,
-        simplify_smooth_angle_deg, simplify_max_deviation:
+        simplify_smooth_angle_deg, simplify_max_deviation,
+        simplify_max_cumulative_turn_deg, simplify_min_remnant_edges:
             Short-edge run-merging heuristics; see :class:`BoundarySimplifySettings`.
+            Remnant merges (``simplify_min_remnant_edges``, default 2) absorb
+            leftover short-edge crumbs that would otherwise hypermesh fillets.
         """
         
         import gmsh
@@ -1838,6 +1843,8 @@ class Mesh:
                     smooth_angle_deg=simplify_smooth_angle_deg,
                     max_deviation=simplify_max_deviation,
                     fidelity_tol=fidelity,
+                    max_cumulative_turn_deg=simplify_max_cumulative_turn_deg,
+                    min_remnant_edges=simplify_min_remnant_edges,
                 )
         else:
             boundary_simplify = None
