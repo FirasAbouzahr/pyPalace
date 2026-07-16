@@ -1432,13 +1432,39 @@ class Mesh:
         return chains
 
     @staticmethod
+    def _gmsh_add_polyline_lines(
+        gmsh: Any,
+        points: list[tuple[float, float]],
+        z: float,
+        lc: float,
+    ) -> list[int]:
+        """Emit consecutive OCC lines through ``points`` (exact polyline)."""
+        if len(points) < 2:
+            raise ValueError("polyline requires at least two points")
+        point_tags = [
+            gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
+            for x, y in points
+        ]
+        return [
+            gmsh.model.occ.addLine(point_tags[i], point_tags[i + 1])
+            for i in range(len(point_tags) - 1)
+        ]
+
+    @staticmethod
     def _gmsh_add_curve_chain(
         gmsh: Any,
         points: list[tuple[float, float]],
         z: float,
         lc: float,
         fidelity_tol: float | None = None,
-    ) -> int:
+    ) -> list[int]:
+        """
+        Build one or more OCC curves for a simplified boundary chain.
+
+        Flat runs become a single Line. Curved runs become a degree-1 BSpline
+        (polyline as one curve) so tiny fillet edges stay combined without the
+        cubic overshoot from ``addSpline`` that dented coupler tips.
+        """
         if len(points) < 2:
             raise ValueError("curve chain requires at least two points")
 
@@ -1450,16 +1476,23 @@ class Mesh:
             p1 = gmsh.model.occ.addPoint(
                 float(points[-1][0]), float(points[-1][1]), float(z), lc
             )
-            return gmsh.model.occ.addLine(p0, p1)
+            return [gmsh.model.occ.addLine(p0, p1)]
 
-        # Keep dense control points on curved runs; dropping them is what
-        # dented tight coupler fillets.
-        spline_pts = Mesh._subsample_polyline_points(points, max_points=48)
+        spline_pts = Mesh._subsample_polyline_points(points, max_points=64)
         point_tags = [
             gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
             for x, y in spline_pts
         ]
-        return gmsh.model.occ.addSpline(point_tags)
+        try:
+            return [gmsh.model.occ.addBSpline(point_tags, degree=1)]
+        except TypeError:
+            try:
+                return [gmsh.model.occ.addBSpline(point_tags, -1, 1)]
+            except Exception:
+                return Mesh._gmsh_add_polyline_lines(gmsh, spline_pts, z, lc)
+        except Exception:
+            # Prefer exact short lines over cubic addSpline overshoot.
+            return Mesh._gmsh_add_polyline_lines(gmsh, spline_pts, z, lc)
 
     @staticmethod
     def _gmsh_add_polygon_surface(
@@ -1519,12 +1552,13 @@ class Mesh:
                     [ring[i], ring[(i + 1) % len(ring)]]
                     for i in range(len(ring))
                 ]
-            curves = [
-                Mesh._gmsh_add_curve_chain(
-                    gmsh, chain, z, lc, fidelity_tol=fidelity_tol
+            curves: list[int] = []
+            for chain in chains:
+                curves.extend(
+                    Mesh._gmsh_add_curve_chain(
+                        gmsh, chain, z, lc, fidelity_tol=fidelity_tol
+                    )
                 )
-                for chain in chains
-            ]
             return gmsh.model.occ.addCurveLoop(curves)
 
         outer = wire_from_ring(list(polygon.exterior.coords), reverse=False)
