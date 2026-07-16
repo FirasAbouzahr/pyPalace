@@ -15,7 +15,16 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from shapely.affinity import scale as shapely_scale
-from shapely.geometry import CAP_STYLE, JOIN_STYLE, LineString, MultiLineString, MultiPolygon, Point, Polygon
+from shapely.geometry import (
+    CAP_STYLE,
+    JOIN_STYLE,
+    LinearRing,
+    LineString,
+    MultiLineString,
+    MultiPolygon,
+    Point,
+    Polygon,
+)
 from shapely.ops import unary_union
 
 class Mesh:
@@ -1078,7 +1087,13 @@ class Mesh:
 
     @dataclass(frozen=True)
     class BoundarySimplifySettings:
-        """Heuristic short-edge run merging for polygon imprint boundaries."""
+        """Boundary decimation settings for polygon imprint rings.
+
+        The active path is tolerance-bounded Douglas-Peucker decimation:
+        vertices may be removed only if every original point stays within
+        ``fidelity_tol`` of the simplified ring. Other fields are retained for
+        API compatibility with older call sites.
+        """
 
         min_edges: int = 10
         cluster_span: float | None = None
@@ -1119,10 +1134,11 @@ class Mesh:
             )
         fidelity_tol = settings.fidelity_tol
         if fidelity_tol is None:
-            # Keep merged curves within a fraction of the finest local mesh size.
+            # Tight geometry budget: prefer faithful fillets over aggressive
+            # vertex deletion. Straights still collapse strongly under DP.
             fidelity_tol = max(
-                0.25 * finest_surface_mesh_size,
-                1e-3 * mesh_scale,
+                0.1 * finest_surface_mesh_size,
+                5e-4 * mesh_scale,
             )
         return Mesh.BoundarySimplifySettings(
             min_edges=settings.min_edges,
@@ -1133,6 +1149,47 @@ class Mesh:
             fidelity_tol=fidelity_tol,
             max_cumulative_turn_deg=settings.max_cumulative_turn_deg,
         )
+
+    @staticmethod
+    def _simplify_ring_douglas_peucker(
+        ring: list[tuple[float, float]],
+        fidelity_tol: float,
+    ) -> list[tuple[float, float]]:
+        """
+        Decimate a closed ring with Douglas-Peucker under a hard error budget.
+
+        Returns the original ring if simplification would drop below 3 vertices
+        or violate the fidelity tolerance.
+        """
+        if len(ring) < 3:
+            return ring
+
+        tol = max(float(fidelity_tol), 0.0)
+        if tol <= 0.0:
+            return ring
+
+        closed = list(ring) + [ring[0]]
+        try:
+            simplified = LineString(closed).simplify(tol, preserve_topology=True)
+        except Exception:
+            return ring
+
+        coords = list(simplified.coords)
+        if len(coords) >= 2 and coords[0] == coords[-1]:
+            coords = coords[:-1]
+        out = Mesh._clean_ring_vertices(
+            [(float(x), float(y)) for x, y in coords],
+            tol=max(1e-12, 1e-9 * max(tol, 1.0)),
+        )
+        if len(out) < 3:
+            return ring
+
+        # Hard fidelity gate against the original vertices.
+        path = LinearRing(out)
+        max_err = max(path.distance(Point(xy)) for xy in ring)
+        if max_err > tol * 1.05:
+            return ring
+        return out
 
     @staticmethod
     def _xy_dist(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -1468,7 +1525,7 @@ class Mesh:
         # Only true single edges become Lines. Multi-point runs always keep
         # every vertex (degree-1 BSpline / polyline) so shallow fillets are not
         # replaced by a corner-cutting chord when sagitta < fidelity_tol.
-        del fidelity_tol
+        _ = fidelity_tol
         if len(points) == 2:
             p0 = gmsh.model.occ.addPoint(
                 float(points[0][0]), float(points[0][1]), float(z), lc
@@ -1522,7 +1579,6 @@ class Mesh:
                     "polygon ring has fewer than three unique vertices after cleanup"
                 )
 
-            fidelity_tol = None
             if boundary_simplify is not None:
                 settings = Mesh._resolve_boundary_simplify_settings(
                     boundary_simplify,
@@ -1530,23 +1586,30 @@ class Mesh:
                     mesh_scale,
                     finest_surface_mesh_size=finest_surface_mesh_size,
                 )
-                fidelity_tol = settings.fidelity_tol
-                chains = Mesh._decompose_ring_to_chains(ring, settings)
-                if not Mesh._ring_chains_are_closed(chains, tol=ring_tol):
-                    chains = [
-                        [ring[i], ring[(i + 1) % len(ring)]]
-                        for i in range(len(ring))
-                    ]
-                elif simplify_stats is not None:
+                fidelity_tol = float(settings.fidelity_tol or 0.0)
+                original_n = len(ring)
+                ring = Mesh._simplify_ring_douglas_peucker(ring, fidelity_tol)
+                if len(ring) < 3:
+                    raise ValueError(
+                        "polygon ring has fewer than three unique vertices "
+                        "after boundary simplification"
+                    )
+                # Exact polyline only: no cubic/spline emission that can cut
+                # corners. DP already removed safe colinear vertices.
+                chains = [
+                    [ring[i], ring[(i + 1) % len(ring)]]
+                    for i in range(len(ring))
+                ]
+                if simplify_stats is not None:
                     simplify_stats["polygon_edges"] = (
-                        simplify_stats.get("polygon_edges", 0) + len(ring)
+                        simplify_stats.get("polygon_edges", 0) + original_n
                     )
                     simplify_stats["gmsh_curves"] = (
                         simplify_stats.get("gmsh_curves", 0) + len(chains)
                     )
                     simplify_stats["merged_runs"] = simplify_stats.get(
                         "merged_runs", 0
-                    ) + sum(1 for chain in chains if len(chain) > 2)
+                    ) + max(original_n - len(chains), 0)
             else:
                 chains = [
                     [ring[i], ring[(i + 1) % len(ring)]]
@@ -1555,9 +1618,7 @@ class Mesh:
             curves: list[int] = []
             for chain in chains:
                 curves.extend(
-                    Mesh._gmsh_add_curve_chain(
-                        gmsh, chain, z, lc, fidelity_tol=fidelity_tol
-                    )
+                    Mesh._gmsh_add_polyline_lines(gmsh, chain, z, lc)
                 )
             return gmsh.model.occ.addCurveLoop(curves)
 
@@ -1748,13 +1809,14 @@ class Mesh:
         simplify_short_edge: float | None = None,
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
+        simplify_fidelity_tol: float | None = None,
     ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
 
-        Polygon boundaries are simplified by default: runs of many small QM
-        edges (circles, meander bends, fillets) are merged into fewer Gmsh
-        lines/splines before imprinting.
+        Polygon boundaries are simplified by default with Douglas-Peucker
+        under a hard fidelity budget, then imprinted as exact polylines
+        (no curve fitting that can cut corners).
 
         Parameters
         ----------
@@ -1804,27 +1866,39 @@ class Mesh:
             Tolerance used for face-to-polygon classification, as a fraction of
             the finest surface mesh size after scaling.
         enable_boundary_simplify:
-            When ``True`` (default), merge short polygon edge runs before
-            imprinting. Set ``False`` to imprint one Gmsh edge per QM segment.
+            When ``True`` (default), decimate imprint rings with
+            Douglas-Peucker under a hard geometry fidelity budget before
+            meshing. Set ``False`` to keep every QM polygon vertex.
         boundary_simplify:
             Optional full :class:`BoundarySimplifySettings` override. When
             omitted and simplification is enabled, ``simplify_*`` kwargs set
-            the defaults.
+            the defaults. The active control is ``fidelity_tol``.
+        simplify_fidelity_tol:
+            Max allowed geometry error for boundary decimation, in design
+            units (mm by default). Smaller keeps more fillet detail; larger
+            removes more colinear vertices on long edges.
         simplify_min_edges, simplify_cluster_span, simplify_short_edge,
         simplify_smooth_angle_deg, simplify_max_deviation:
-            Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
+            Retained for API compatibility; decimation is controlled by
+            ``simplify_fidelity_tol``.
         """
         
         import gmsh
 
         if enable_boundary_simplify:
             if boundary_simplify is None:
+                fidelity = (
+                    None
+                    if simplify_fidelity_tol is None
+                    else float(simplify_fidelity_tol) * mesh_scale
+                )
                 boundary_simplify = Mesh.BoundarySimplifySettings(
                     min_edges=simplify_min_edges,
                     cluster_span=simplify_cluster_span,
                     short_edge=simplify_short_edge,
                     smooth_angle_deg=simplify_smooth_angle_deg,
                     max_deviation=simplify_max_deviation,
+                    fidelity_tol=fidelity,
                 )
         else:
             boundary_simplify = None
@@ -2300,6 +2374,8 @@ class Mesh:
             gmsh.option.setNumber("Mesh.Binary", 0)
             gmsh.option.setNumber("Mesh.SaveAll", 0)
             gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+            gmsh.option.setNumber("Mesh.Optimize", 1)
+            gmsh.option.setNumber("Mesh.OptimizeNetgen", 1)
 
             gmsh.model.mesh.generate(3)
             gmsh.write(str(output_path))
@@ -2310,7 +2386,7 @@ class Mesh:
             if simplify_stats is not None:
                 polygon_edges = simplify_stats.get("polygon_edges", 0)
                 gmsh_curves = simplify_stats.get("gmsh_curves", 0)
-                merged_runs = simplify_stats.get("merged_runs", 0)
+                removed = simplify_stats.get("merged_runs", 0)
                 if polygon_edges > 0:
                     resolved = Mesh._resolve_boundary_simplify_settings(
                         boundary_simplify,
@@ -2322,15 +2398,14 @@ class Mesh:
                         "boundary simplify: "
                         f"{polygon_edges} QM polygon edges -> "
                         f"{gmsh_curves} Gmsh curves "
-                        f"({merged_runs} merged runs; "
-                        f"short_edge={resolved.short_edge / mesh_scale:.4g} mm, "
-                        f"cluster_span={resolved.cluster_span / mesh_scale:.4g} mm)"
+                        f"({removed} vertices removed by Douglas-Peucker; "
+                        f"fidelity_tol={resolved.fidelity_tol / mesh_scale:.4g} mm)"
                     )
-                    if merged_runs == 0:
+                    if removed == 0:
                         print(
-                            "USER WARNING: boundary simplify merged 0 edge runs; "
-                            "try lowering simplify_min_edges or raising "
-                            "simplify_cluster_span / simplify_short_edge."
+                            "USER WARNING: boundary simplify removed 0 vertices; "
+                            "geometry may already be coarse, or fidelity_tol is "
+                            "very tight relative to edge lengths."
                         )
 
         finally:
