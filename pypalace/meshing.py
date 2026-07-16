@@ -1084,9 +1084,11 @@ class Mesh:
         while enforcing a hard emission-fidelity policy: multi-point runs keep
         every vertex and are never replaced by an endpoint chord or cubic spline.
 
-        Leftover short runs shorter than ``min_edges`` but at least
-        ``min_remnant_edges`` long are still merged (aggressive remnant pack)
-        so fillet crumbs do not force hypermesh nodes.
+        Leftover short runs below ``min_edges`` are handled carefully:
+        near-flat crumbs (``>= min_remnant_edges``) collapse to an endpoint
+        Line; curved crumbs (``>= 3`` edges) stay as a full-vertex polyline
+        curve. Blindly packing every remnant into one curve under-samples
+        tight fillets and looks like cut corners in the mesh.
         """
 
         min_edges: int = 10
@@ -1095,7 +1097,7 @@ class Mesh:
         smooth_angle_deg: float = 35.0
         max_deviation: float | None = None
         fidelity_tol: float | None = None
-        max_cumulative_turn_deg: float = 90.0
+        max_cumulative_turn_deg: float = 60.0
         min_remnant_edges: int = 2
 
     @staticmethod
@@ -1406,21 +1408,39 @@ class Mesh:
                 continue
 
             accept_merge = False
+            emit_chain = chain
+            fidelity_tol = (
+                settings.fidelity_tol
+                if settings.fidelity_tol is not None
+                else 0.0
+            )
             if edge_count >= settings.min_edges:
                 deviation = Mesh._chain_max_deviation(chain)
                 accept_merge = deviation <= settings.max_deviation
             elif edge_count >= min_remnant_edges:
-                # Aggressive remnant merge: any leftover multi-edge short run
-                # (including near-flat fillet crumbs that still hypermesh).
-                # Strict emission keeps every vertex, so this is geometry-safe.
-                accept_merge = True
+                # Remnants below min_edges: never blindly pack into one curve.
+                # A short BSpline often gets a single mesh element between
+                # endpoints, which chords across fillets ("cut corners") and
+                # can create illegal tets for Netgen. Instead:
+                # - near-flat crumbs → endpoint Line (safe, kills hypermesh)
+                # - curved crumbs (≥3) → keep every vertex as one polyline curve
+                if Mesh._is_flat_chain(chain, fidelity_tol):
+                    accept_merge = True
+                    emit_chain = [chain[0], chain[-1]]
+                elif edge_count >= 3 and Mesh._chain_sagitta(chain) > fidelity_tol:
+                    accept_merge = True
+                    emit_chain = chain
 
             if accept_merge:
-                if Mesh._chain_merge_is_faithful(chain, settings):
-                    chains.append(chain)
+                if len(emit_chain) == 2:
+                    chains.append(emit_chain)
+                elif Mesh._chain_merge_is_faithful(emit_chain, settings):
+                    chains.append(emit_chain)
                 else:
                     chains.extend(
-                        Mesh._split_chain_to_faithful_runs(chain, settings)
+                        Mesh._split_chain_to_faithful_runs(
+                            emit_chain, settings
+                        )
                     )
                 edges_processed += edge_count
                 start = j % n
@@ -1751,7 +1771,7 @@ class Mesh:
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
         simplify_fidelity_tol: float | None = None,
-        simplify_max_cumulative_turn_deg: float = 90.0,
+        simplify_max_cumulative_turn_deg: float = 60.0,
         simplify_min_remnant_edges: int = 2,
     ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
@@ -1823,8 +1843,8 @@ class Mesh:
         simplify_smooth_angle_deg, simplify_max_deviation,
         simplify_max_cumulative_turn_deg, simplify_min_remnant_edges:
             Short-edge run-merging heuristics; see :class:`BoundarySimplifySettings`.
-            Remnant merges (``simplify_min_remnant_edges``, default 2) absorb
-            leftover short-edge crumbs that would otherwise hypermesh fillets.
+            Near-flat leftover crumbs (``simplify_min_remnant_edges``) collapse
+            to an endpoint Line; curved leftovers keep full-vertex curves.
         """
         
         import gmsh
