@@ -1235,15 +1235,12 @@ class Mesh:
         settings: "Mesh.BoundarySimplifySettings",
     ) -> list[tuple[float, float]]:
         """Points that would be sent to Gmsh for this chain."""
-        fidelity_tol = (
-            settings.fidelity_tol
-            if settings.fidelity_tol is not None
-            else 0.0
-        )
-        if len(chain) == 2 or Mesh._is_flat_chain(chain, fidelity_tol):
+        _ = settings
+        # Never collapse multi-point runs to an endpoint chord: shallow fillets
+        # can look "flat" by sagitta and get their corners cut off.
+        if len(chain) == 2:
             return [chain[0], chain[-1]]
-        # Keep all vertices on short/medium runs so tight fillets stay faithful.
-        return Mesh._subsample_polyline_points(chain, max_points=48)
+        return Mesh._subsample_polyline_points(chain, max_points=64)
 
     @staticmethod
     def _emission_fidelity_error(
@@ -1468,8 +1465,11 @@ class Mesh:
         if len(points) < 2:
             raise ValueError("curve chain requires at least two points")
 
-        tol = 0.0 if fidelity_tol is None else float(fidelity_tol)
-        if len(points) == 2 or Mesh._is_flat_chain(points, tol):
+        # Only true single edges become Lines. Multi-point runs always keep
+        # every vertex (degree-1 BSpline / polyline) so shallow fillets are not
+        # replaced by a corner-cutting chord when sagitta < fidelity_tol.
+        del fidelity_tol
+        if len(points) == 2:
             p0 = gmsh.model.occ.addPoint(
                 float(points[0][0]), float(points[0][1]), float(z), lc
             )
