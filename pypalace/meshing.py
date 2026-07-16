@@ -1085,6 +1085,8 @@ class Mesh:
         short_edge: float | None = None
         smooth_angle_deg: float = 35.0
         max_deviation: float | None = None
+        fidelity_tol: float | None = None
+        max_cumulative_turn_deg: float = 90.0
 
     @staticmethod
     def _resolve_boundary_simplify_settings(
@@ -1115,12 +1117,21 @@ class Mesh:
                 0.5 * cluster_span,
                 2.0 * finest_surface_mesh_size,
             )
+        fidelity_tol = settings.fidelity_tol
+        if fidelity_tol is None:
+            # Keep merged curves within a fraction of the finest local mesh size.
+            fidelity_tol = max(
+                0.25 * finest_surface_mesh_size,
+                1e-3 * mesh_scale,
+            )
         return Mesh.BoundarySimplifySettings(
             min_edges=settings.min_edges,
             cluster_span=cluster_span,
             short_edge=short_edge,
             smooth_angle_deg=settings.smooth_angle_deg,
             max_deviation=max_deviation,
+            fidelity_tol=fidelity_tol,
+            max_cumulative_turn_deg=settings.max_cumulative_turn_deg,
         )
 
     @staticmethod
@@ -1155,14 +1166,44 @@ class Mesh:
         return math.degrees(math.acos(cosang))
 
     @staticmethod
+    def _chain_sagitta(chain: list[tuple[float, float]]) -> float:
+        """Max distance from intermediate vertices to the endpoint chord."""
+        if len(chain) <= 2:
+            return 0.0
+        chord = LineString([chain[0], chain[-1]])
+        return max(Point(xy).distance(chord) for xy in chain[1:-1])
+
+    @staticmethod
+    def _is_flat_chain(
+        points: list[tuple[float, float]],
+        fidelity_tol: float,
+        angle_tol_deg: float = 3.0,
+    ) -> bool:
+        """True only for nearly straight runs safe to emit as a single Line."""
+        if len(points) <= 2:
+            return True
+        if Mesh._chain_sagitta(points) > fidelity_tol:
+            return False
+        for idx in range(1, len(points) - 1):
+            if (
+                Mesh._deflection_angle_deg(
+                    points[idx - 1], points[idx], points[idx + 1]
+                )
+                > angle_tol_deg
+            ):
+                return False
+        return True
+
+    @staticmethod
     def _is_colinear_chain(
         points: list[tuple[float, float]], tol_deg: float = 3.0
     ) -> bool:
+        """Backward-compatible name; uses deflection, not interior angle."""
         if len(points) <= 2:
             return True
         for idx in range(1, len(points) - 1):
             if (
-                Mesh._turn_angle_deg(
+                Mesh._deflection_angle_deg(
                     points[idx - 1], points[idx], points[idx + 1]
                 )
                 > tol_deg
@@ -1172,7 +1213,7 @@ class Mesh:
 
     @staticmethod
     def _subsample_polyline_points(
-        points: list[tuple[float, float]], max_points: int = 12
+        points: list[tuple[float, float]], max_points: int = 48
     ) -> list[tuple[float, float]]:
         if len(points) <= max_points:
             return points
@@ -1186,12 +1227,78 @@ class Mesh:
 
     @staticmethod
     def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
-        if len(chain) <= 2:
+        return Mesh._chain_sagitta(chain)
+
+    @staticmethod
+    def _emission_control_points(
+        chain: list[tuple[float, float]],
+        settings: "Mesh.BoundarySimplifySettings",
+    ) -> list[tuple[float, float]]:
+        """Points that would be sent to Gmsh for this chain."""
+        fidelity_tol = (
+            settings.fidelity_tol
+            if settings.fidelity_tol is not None
+            else 0.0
+        )
+        if len(chain) == 2 or Mesh._is_flat_chain(chain, fidelity_tol):
+            return [chain[0], chain[-1]]
+        # Keep all vertices on short/medium runs so tight fillets stay faithful.
+        return Mesh._subsample_polyline_points(chain, max_points=48)
+
+    @staticmethod
+    def _emission_fidelity_error(
+        chain: list[tuple[float, float]],
+        control_points: list[tuple[float, float]],
+    ) -> float:
+        """Max distance from original chain vertices to the emitted control polyline."""
+        if len(chain) <= 2 or len(control_points) < 2:
             return 0.0
-        if Mesh._is_colinear_chain(chain):
-            return 0.0
-        chord = LineString([chain[0], chain[-1]])
-        return max(Point(xy).distance(chord) for xy in chain[1:-1])
+        path = LineString(control_points)
+        return max(Point(xy).distance(path) for xy in chain)
+
+    @staticmethod
+    def _chain_merge_is_faithful(
+        chain: list[tuple[float, float]],
+        settings: "Mesh.BoundarySimplifySettings",
+    ) -> bool:
+        fidelity_tol = (
+            settings.fidelity_tol
+            if settings.fidelity_tol is not None
+            else 0.0
+        )
+        controls = Mesh._emission_control_points(chain, settings)
+        return Mesh._emission_fidelity_error(chain, controls) <= fidelity_tol
+
+    @staticmethod
+    def _split_chain_to_faithful_runs(
+        chain: list[tuple[float, float]],
+        settings: "Mesh.BoundarySimplifySettings",
+    ) -> list[list[tuple[float, float]]]:
+        """
+        Split a rejected merge into smaller faithful runs.
+
+        Prefers denser multi-edge polylines/splines over pure per-edge emission
+        so tiny fillet tessellation does not hypermesh.
+        """
+        n_edges = len(chain) - 1
+        if n_edges <= 1:
+            return [chain] if len(chain) >= 2 else []
+
+        if Mesh._chain_merge_is_faithful(chain, settings):
+            return [chain]
+
+        # Recursively bisect until each piece is faithful or a single edge.
+        mid = n_edges // 2
+        if mid < 1:
+            return [
+                [chain[i], chain[i + 1]] for i in range(n_edges)
+            ]
+
+        left = chain[: mid + 1]
+        right = chain[mid:]
+        return Mesh._split_chain_to_faithful_runs(
+            left, settings
+        ) + Mesh._split_chain_to_faithful_runs(right, settings)
 
     @staticmethod
     def _clean_ring_vertices(
@@ -1237,12 +1344,14 @@ class Mesh:
         chains: list[list[tuple[float, float]]] = []
         edges_processed = 0
         start = 0
+        min_curved_edges = 3
 
         while edges_processed < n:
             j = start
             chain = [vertices[start]]
             total_len = 0.0
             edge_count = 0
+            cum_turn = 0.0
             remaining = n - edges_processed
 
             while True:
@@ -1265,10 +1374,19 @@ class Mesh:
                     )
                     if turn > settings.smooth_angle_deg:
                         break
+                    if (
+                        cum_turn + turn
+                        > settings.max_cumulative_turn_deg
+                    ):
+                        break
 
                 if edge_count >= remaining:
                     break
 
+                if edge_count > 0:
+                    cum_turn += Mesh._deflection_angle_deg(
+                        vertices[(j - 1) % n], vertices[j], vertices[k]
+                    )
                 edge_count += 1
                 total_len += edge_len
                 j = k
@@ -1280,13 +1398,32 @@ class Mesh:
             if edge_count == -1:
                 continue
 
+            accept_merge = False
             if edge_count >= settings.min_edges:
                 deviation = Mesh._chain_max_deviation(chain)
-                if deviation <= settings.max_deviation:
+                accept_merge = deviation <= settings.max_deviation
+            elif edge_count >= min_curved_edges:
+                # Short curved remnants (e.g. coupler tips): still merge to
+                # avoid hypermeshing tiny fillet edges.
+                fidelity_tol = (
+                    settings.fidelity_tol
+                    if settings.fidelity_tol is not None
+                    else 0.0
+                )
+                accept_merge = (
+                    Mesh._chain_sagitta(chain) > fidelity_tol
+                )
+
+            if accept_merge:
+                if Mesh._chain_merge_is_faithful(chain, settings):
                     chains.append(chain)
-                    edges_processed += edge_count
-                    start = j % n
-                    continue
+                else:
+                    chains.extend(
+                        Mesh._split_chain_to_faithful_runs(chain, settings)
+                    )
+                edges_processed += edge_count
+                start = j % n
+                continue
 
             chains.append([vertices[start], vertices[(start + 1) % n]])
             edges_processed += 1
@@ -1300,11 +1437,13 @@ class Mesh:
         points: list[tuple[float, float]],
         z: float,
         lc: float,
+        fidelity_tol: float | None = None,
     ) -> int:
         if len(points) < 2:
             raise ValueError("curve chain requires at least two points")
 
-        if len(points) == 2 or Mesh._is_colinear_chain(points):
+        tol = 0.0 if fidelity_tol is None else float(fidelity_tol)
+        if len(points) == 2 or Mesh._is_flat_chain(points, tol):
             p0 = gmsh.model.occ.addPoint(
                 float(points[0][0]), float(points[0][1]), float(z), lc
             )
@@ -1313,7 +1452,9 @@ class Mesh:
             )
             return gmsh.model.occ.addLine(p0, p1)
 
-        spline_pts = Mesh._subsample_polyline_points(points)
+        # Keep dense control points on curved runs; dropping them is what
+        # dented tight coupler fillets.
+        spline_pts = Mesh._subsample_polyline_points(points, max_points=48)
         point_tags = [
             gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
             for x, y in spline_pts
@@ -1348,6 +1489,7 @@ class Mesh:
                     "polygon ring has fewer than three unique vertices after cleanup"
                 )
 
+            fidelity_tol = None
             if boundary_simplify is not None:
                 settings = Mesh._resolve_boundary_simplify_settings(
                     boundary_simplify,
@@ -1355,6 +1497,7 @@ class Mesh:
                     mesh_scale,
                     finest_surface_mesh_size=finest_surface_mesh_size,
                 )
+                fidelity_tol = settings.fidelity_tol
                 chains = Mesh._decompose_ring_to_chains(ring, settings)
                 if not Mesh._ring_chains_are_closed(chains, tol=ring_tol):
                     chains = [
@@ -1377,7 +1520,10 @@ class Mesh:
                     for i in range(len(ring))
                 ]
             curves = [
-                Mesh._gmsh_add_curve_chain(gmsh, chain, z, lc) for chain in chains
+                Mesh._gmsh_add_curve_chain(
+                    gmsh, chain, z, lc, fidelity_tol=fidelity_tol
+                )
+                for chain in chains
             ]
             return gmsh.model.occ.addCurveLoop(curves)
 
