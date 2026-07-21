@@ -1078,13 +1078,22 @@ class Mesh:
 
     @dataclass(frozen=True)
     class BoundarySimplifySettings:
-        """Heuristic short-edge run merging for polygon imprint boundaries."""
+        """Recover clean Gmsh curves from QM polyline tessellation.
+
+        Short-edge runs are packed, then classified:
+        - nearly flat → endpoint ``Line``
+        - circular within ``fidelity_tol`` → OCC ``Circle`` / circle arc
+        - otherwise → degree-1 ``BSpline`` through every vertex
+
+        Never emits cubic ``addSpline`` (that overshoots fillets).
+        """
 
         min_edges: int = 10
         cluster_span: float | None = None
         short_edge: float | None = None
         smooth_angle_deg: float = 35.0
         max_deviation: float | None = None
+        fidelity_tol: float | None = None
 
     @staticmethod
     def _resolve_boundary_simplify_settings(
@@ -1111,9 +1120,16 @@ class Mesh:
             )
         max_deviation = settings.max_deviation
         if max_deviation is None:
+            # Soft pack-size preference only; emission is geometry-safe.
             max_deviation = max(
                 0.5 * cluster_span,
                 2.0 * finest_surface_mesh_size,
+            )
+        fidelity_tol = settings.fidelity_tol
+        if fidelity_tol is None:
+            fidelity_tol = max(
+                0.1 * finest_surface_mesh_size,
+                5e-4 * mesh_scale,
             )
         return Mesh.BoundarySimplifySettings(
             min_edges=settings.min_edges,
@@ -1121,6 +1137,7 @@ class Mesh:
             short_edge=short_edge,
             smooth_angle_deg=settings.smooth_angle_deg,
             max_deviation=max_deviation,
+            fidelity_tol=fidelity_tol,
         )
 
     @staticmethod
@@ -1158,11 +1175,12 @@ class Mesh:
     def _is_colinear_chain(
         points: list[tuple[float, float]], tol_deg: float = 3.0
     ) -> bool:
+        """True when every vertex deflects by at most ``tol_deg`` from a straight walk."""
         if len(points) <= 2:
             return True
         for idx in range(1, len(points) - 1):
             if (
-                Mesh._turn_angle_deg(
+                Mesh._deflection_angle_deg(
                     points[idx - 1], points[idx], points[idx + 1]
                 )
                 > tol_deg
@@ -1171,27 +1189,128 @@ class Mesh:
         return True
 
     @staticmethod
-    def _subsample_polyline_points(
-        points: list[tuple[float, float]], max_points: int = 12
-    ) -> list[tuple[float, float]]:
-        if len(points) <= max_points:
-            return points
-        indices = np.linspace(0, len(points) - 1, max_points, dtype=int)
-        out: list[tuple[float, float]] = []
-        for idx in indices:
-            pt = points[int(idx)]
-            if not out or pt != out[-1]:
-                out.append(pt)
-        return out
-
-    @staticmethod
-    def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
+    def _chain_sagitta(chain: list[tuple[float, float]]) -> float:
+        """Max distance from intermediate vertices to the endpoint chord."""
         if len(chain) <= 2:
-            return 0.0
-        if Mesh._is_colinear_chain(chain):
             return 0.0
         chord = LineString([chain[0], chain[-1]])
         return max(Point(xy).distance(chord) for xy in chain[1:-1])
+
+    @staticmethod
+    def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
+        return Mesh._chain_sagitta(chain)
+
+    @staticmethod
+    def _is_flat_chain(
+        points: list[tuple[float, float]],
+        fidelity_tol: float,
+        angle_tol_deg: float = 3.0,
+    ) -> bool:
+        if len(points) <= 2:
+            return True
+        if Mesh._chain_sagitta(points) > fidelity_tol:
+            return False
+        return Mesh._is_colinear_chain(points, tol_deg=angle_tol_deg)
+
+    @staticmethod
+    def _fit_circle_2d(
+        points: list[tuple[float, float]],
+    ) -> tuple[float, float, float] | None:
+        """Algebraic least-squares circle fit → ``(cx, cy, r)`` or ``None``."""
+        if len(points) < 3:
+            return None
+        pts = np.asarray(points, dtype=float)
+        x = pts[:, 0]
+        y = pts[:, 1]
+        A = np.column_stack([2.0 * x, 2.0 * y, np.ones(len(pts))])
+        b = x * x + y * y
+        try:
+            sol, _, rank, _ = np.linalg.lstsq(A, b, rcond=None)
+        except Exception:
+            return None
+        if rank < 3:
+            return None
+        cx, cy, c = (float(sol[0]), float(sol[1]), float(sol[2]))
+        r2 = c + cx * cx + cy * cy
+        if r2 <= 0.0:
+            return None
+        return cx, cy, math.sqrt(r2)
+
+    @staticmethod
+    def _unwrap_polar_angles(
+        points: list[tuple[float, float]], cx: float, cy: float
+    ) -> list[float]:
+        raw = [math.atan2(y - cy, x - cx) for x, y in points]
+        out = [raw[0]]
+        for angle in raw[1:]:
+            delta = angle - out[-1]
+            while delta > math.pi:
+                delta -= 2.0 * math.pi
+            while delta < -math.pi:
+                delta += 2.0 * math.pi
+            out.append(out[-1] + delta)
+        return out
+
+    @staticmethod
+    def _chain_circle_fit(
+        points: list[tuple[float, float]],
+        fidelity_tol: float,
+    ) -> tuple[float, float, float, float, float] | None:
+        """
+        If ``points`` lie on a circle within ``fidelity_tol``, return
+        ``(cx, cy, r, angle1, angle2)`` with unwrapped polar span.
+        """
+        # Drop duplicate closing vertex for fit stability.
+        pts = list(points)
+        if len(pts) >= 2 and Mesh._xy_dist(pts[0], pts[-1]) <= max(
+            fidelity_tol * 1e-3, 1e-12
+        ):
+            pts = pts[:-1]
+        if len(pts) < 3:
+            return None
+
+        fit = Mesh._fit_circle_2d(pts)
+        if fit is None:
+            return None
+        cx, cy, radius = fit
+        if radius <= fidelity_tol:
+            return None
+
+        max_err = max(
+            abs(Mesh._xy_dist((x, y), (cx, cy)) - radius) for x, y in pts
+        )
+        if max_err > fidelity_tol:
+            return None
+
+        angles = Mesh._unwrap_polar_angles(pts, cx, cy)
+        span = angles[-1] - angles[0]
+        if abs(span) < math.radians(5.0):
+            return None
+        # Reject fits that reverse direction mid-run.
+        signs = [angles[i + 1] - angles[i] for i in range(len(angles) - 1)]
+        if not signs:
+            return None
+        if any(s * signs[0] < 0.0 for s in signs):
+            return None
+
+        return cx, cy, radius, float(angles[0]), float(angles[-1])
+
+    @staticmethod
+    def _ring_is_full_circle(
+        ring: list[tuple[float, float]],
+        fidelity_tol: float,
+    ) -> tuple[float, float, float] | None:
+        """Return ``(cx, cy, r)`` when the closed ring is a full circle."""
+        if len(ring) < 8:
+            return None
+        fit = Mesh._chain_circle_fit(list(ring) + [ring[0]], fidelity_tol)
+        if fit is None:
+            return None
+        cx, cy, radius, angle1, angle2 = fit
+        span = abs(angle2 - angle1)
+        if span < math.radians(300.0):
+            return None
+        return cx, cy, radius
 
     @staticmethod
     def _clean_ring_vertices(
@@ -1229,7 +1348,7 @@ class Mesh:
         vertices: list[tuple[float, float]],
         settings: "Mesh.BoundarySimplifySettings",
     ) -> list[list[tuple[float, float]]]:
-        """Merge consecutive short edges into spline/line chains on a closed ring."""
+        """Pack consecutive short edges into chains for curve recovery."""
         n = len(vertices)
         if n < 2:
             return []
@@ -1237,6 +1356,9 @@ class Mesh:
         chains: list[list[tuple[float, float]]] = []
         edges_processed = 0
         start = 0
+        fidelity_tol = (
+            settings.fidelity_tol if settings.fidelity_tol is not None else 0.0
+        )
 
         while edges_processed < n:
             j = start
@@ -1258,8 +1380,18 @@ class Mesh:
                     break
 
                 if edge_count > 0:
-                    if total_len + edge_len > settings.cluster_span:
-                        break
+                    # Allow long circular packs past cluster_span when the
+                    # growing chain still fits a circle within fidelity.
+                    over_span = total_len + edge_len > settings.cluster_span
+                    if over_span:
+                        circular = (
+                            Mesh._chain_circle_fit(
+                                chain + [vertices[k]], fidelity_tol
+                            )
+                            is not None
+                        )
+                        if not circular:
+                            break
                     turn = Mesh._deflection_angle_deg(
                         vertices[(j - 1) % n], vertices[j], vertices[k]
                     )
@@ -1280,13 +1412,21 @@ class Mesh:
             if edge_count == -1:
                 continue
 
+            accept = False
             if edge_count >= settings.min_edges:
-                deviation = Mesh._chain_max_deviation(chain)
-                if deviation <= settings.max_deviation:
-                    chains.append(chain)
-                    edges_processed += edge_count
-                    start = j % n
-                    continue
+                if Mesh._is_flat_chain(chain, fidelity_tol):
+                    accept = True
+                elif Mesh._chain_circle_fit(chain, fidelity_tol) is not None:
+                    accept = True
+                elif Mesh._chain_max_deviation(chain) <= settings.max_deviation:
+                    # Non-circular but mild bow → degree-1 polyline curve.
+                    accept = True
+
+            if accept:
+                chains.append(chain)
+                edges_processed += edge_count
+                start = j % n
+                continue
 
             chains.append([vertices[start], vertices[(start + 1) % n]])
             edges_processed += 1
@@ -1295,30 +1435,95 @@ class Mesh:
         return chains
 
     @staticmethod
+    def _gmsh_add_polyline_lines(
+        gmsh: Any,
+        points: list[tuple[float, float]],
+        z: float,
+        lc: float,
+    ) -> list[int]:
+        """Emit consecutive OCC lines through ``points`` (exact polyline)."""
+        if len(points) < 2:
+            raise ValueError("polyline requires at least two points")
+        point_tags = [
+            gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
+            for x, y in points
+        ]
+        return [
+            gmsh.model.occ.addLine(point_tags[i], point_tags[i + 1])
+            for i in range(len(point_tags) - 1)
+        ]
+
+    @staticmethod
     def _gmsh_add_curve_chain(
         gmsh: Any,
         points: list[tuple[float, float]],
         z: float,
         lc: float,
-    ) -> int:
+        fidelity_tol: float | None = None,
+        stats: dict[str, int] | None = None,
+    ) -> list[int]:
+        """
+        Emit recovered OCC curve(s) for a packed boundary chain.
+
+        Priority: endpoint Line → circle/arc fit → degree-1 BSpline.
+        Never cubic ``addSpline``.
+        """
         if len(points) < 2:
             raise ValueError("curve chain requires at least two points")
 
-        if len(points) == 2 or Mesh._is_colinear_chain(points):
+        tol = 0.0 if fidelity_tol is None else float(fidelity_tol)
+
+        if len(points) == 2 or Mesh._is_flat_chain(points, tol):
             p0 = gmsh.model.occ.addPoint(
                 float(points[0][0]), float(points[0][1]), float(z), lc
             )
             p1 = gmsh.model.occ.addPoint(
                 float(points[-1][0]), float(points[-1][1]), float(z), lc
             )
-            return gmsh.model.occ.addLine(p0, p1)
+            if stats is not None:
+                stats["line_merges"] = stats.get("line_merges", 0) + 1
+            return [gmsh.model.occ.addLine(p0, p1)]
 
-        spline_pts = Mesh._subsample_polyline_points(points)
+        circle = Mesh._chain_circle_fit(points, tol) if tol > 0.0 else None
+        if circle is not None:
+            cx, cy, radius, angle1, angle2 = circle
+            try:
+                if abs(abs(angle2 - angle1) - 2.0 * math.pi) <= math.radians(
+                    15.0
+                ):
+                    tag = gmsh.model.occ.addCircle(
+                        float(cx), float(cy), float(z), float(radius)
+                    )
+                else:
+                    tag = gmsh.model.occ.addCircle(
+                        float(cx),
+                        float(cy),
+                        float(z),
+                        float(radius),
+                        angle1=float(angle1),
+                        angle2=float(angle2),
+                    )
+                if stats is not None:
+                    stats["arc_fits"] = stats.get("arc_fits", 0) + 1
+                return [tag]
+            except Exception:
+                pass
+
         point_tags = [
             gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
-            for x, y in spline_pts
+            for x, y in points
         ]
-        return gmsh.model.occ.addSpline(point_tags)
+        if stats is not None:
+            stats["deg1_merges"] = stats.get("deg1_merges", 0) + 1
+        try:
+            return [gmsh.model.occ.addBSpline(point_tags, degree=1)]
+        except TypeError:
+            try:
+                return [gmsh.model.occ.addBSpline(point_tags, -1, 1)]
+            except Exception:
+                return Mesh._gmsh_add_polyline_lines(gmsh, points, z, lc)
+        except Exception:
+            return Mesh._gmsh_add_polyline_lines(gmsh, points, z, lc)
 
     @staticmethod
     def _gmsh_add_polygon_surface(
@@ -1348,6 +1553,7 @@ class Mesh:
                     "polygon ring has fewer than three unique vertices after cleanup"
                 )
 
+            fidelity_tol = None
             if boundary_simplify is not None:
                 settings = Mesh._resolve_boundary_simplify_settings(
                     boundary_simplify,
@@ -1355,6 +1561,31 @@ class Mesh:
                     mesh_scale,
                     finest_surface_mesh_size=finest_surface_mesh_size,
                 )
+                fidelity_tol = settings.fidelity_tol
+
+                full = Mesh._ring_is_full_circle(
+                    ring, float(fidelity_tol or 0.0)
+                )
+                if full is not None:
+                    cx, cy, radius = full
+                    circle = gmsh.model.occ.addCircle(
+                        float(cx), float(cy), float(z), float(radius)
+                    )
+                    if simplify_stats is not None:
+                        simplify_stats["polygon_edges"] = (
+                            simplify_stats.get("polygon_edges", 0) + len(ring)
+                        )
+                        simplify_stats["gmsh_curves"] = (
+                            simplify_stats.get("gmsh_curves", 0) + 1
+                        )
+                        simplify_stats["merged_runs"] = (
+                            simplify_stats.get("merged_runs", 0) + 1
+                        )
+                        simplify_stats["arc_fits"] = (
+                            simplify_stats.get("arc_fits", 0) + 1
+                        )
+                    return gmsh.model.occ.addCurveLoop([circle])
+
                 chains = Mesh._decompose_ring_to_chains(ring, settings)
                 if not Mesh._ring_chains_are_closed(chains, tol=ring_tol):
                     chains = [
@@ -1376,9 +1607,18 @@ class Mesh:
                     [ring[i], ring[(i + 1) % len(ring)]]
                     for i in range(len(ring))
                 ]
-            curves = [
-                Mesh._gmsh_add_curve_chain(gmsh, chain, z, lc) for chain in chains
-            ]
+            curves: list[int] = []
+            for chain in chains:
+                curves.extend(
+                    Mesh._gmsh_add_curve_chain(
+                        gmsh,
+                        chain,
+                        z,
+                        lc,
+                        fidelity_tol=fidelity_tol,
+                        stats=simplify_stats,
+                    )
+                )
             return gmsh.model.occ.addCurveLoop(curves)
 
         outer = wire_from_ring(list(polygon.exterior.coords), reverse=False)
@@ -1568,13 +1808,14 @@ class Mesh:
         simplify_short_edge: float | None = None,
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
+        simplify_fidelity_tol: float | None = None,
     ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
 
-        Polygon boundaries are simplified by default: runs of many small QM
-        edges (circles, meander bends, fillets) are merged into fewer Gmsh
-        lines/splines before imprinting.
+        Polygon boundaries are recovered by default: short QM edge runs become
+        Lines (flat), OCC circles/arcs (circular fits), or degree-1 BSplines
+        (exact polyline fallback). Cubic splines are never used.
 
         Parameters
         ----------
@@ -1624,27 +1865,36 @@ class Mesh:
             Tolerance used for face-to-polygon classification, as a fraction of
             the finest surface mesh size after scaling.
         enable_boundary_simplify:
-            When ``True`` (default), merge short polygon edge runs before
-            imprinting. Set ``False`` to imprint one Gmsh edge per QM segment.
+            When ``True`` (default), recover Lines / arcs / degree-1 curves from
+            short polygon edge runs before imprinting.
         boundary_simplify:
             Optional full :class:`BoundarySimplifySettings` override. When
             omitted and simplification is enabled, ``simplify_*`` kwargs set
             the defaults.
+        simplify_fidelity_tol:
+            Max radial error for circle/arc fits, in design units (mm by
+            default). Also used as the flatness tolerance for Line collapses.
         simplify_min_edges, simplify_cluster_span, simplify_short_edge,
         simplify_smooth_angle_deg, simplify_max_deviation:
-            Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
+            Packing heuristics; see :class:`BoundarySimplifySettings`.
         """
         
         import gmsh
 
         if enable_boundary_simplify:
             if boundary_simplify is None:
+                fidelity = (
+                    None
+                    if simplify_fidelity_tol is None
+                    else float(simplify_fidelity_tol) * mesh_scale
+                )
                 boundary_simplify = Mesh.BoundarySimplifySettings(
                     min_edges=simplify_min_edges,
                     cluster_span=simplify_cluster_span,
                     short_edge=simplify_short_edge,
                     smooth_angle_deg=simplify_smooth_angle_deg,
                     max_deviation=simplify_max_deviation,
+                    fidelity_tol=fidelity,
                 )
         else:
             boundary_simplify = None
@@ -2143,8 +2393,11 @@ class Mesh:
                         f"{polygon_edges} QM polygon edges -> "
                         f"{gmsh_curves} Gmsh curves "
                         f"({merged_runs} merged runs; "
+                        f"arc_fits={simplify_stats.get('arc_fits', 0)}, "
+                        f"line_merges={simplify_stats.get('line_merges', 0)}, "
+                        f"deg1_merges={simplify_stats.get('deg1_merges', 0)}; "
                         f"short_edge={resolved.short_edge / mesh_scale:.4g} mm, "
-                        f"cluster_span={resolved.cluster_span / mesh_scale:.4g} mm)"
+                        f"fidelity_tol={resolved.fidelity_tol / mesh_scale:.4g} mm)"
                     )
                     if merged_runs == 0:
                         print(
