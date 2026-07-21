@@ -1078,7 +1078,13 @@ class Mesh:
 
     @dataclass(frozen=True)
     class BoundarySimplifySettings:
-        """Heuristic short-edge run merging for polygon imprint boundaries."""
+        """Heuristic short-edge run merging for polygon imprint boundaries.
+
+        Merges runs of tiny QM edges into fewer Gmsh curves. Only nearly-flat
+        packs are accepted by default; curved fillet packs stay as original
+        edges so coupler corners are not rewritten. Merged runs are never
+        emitted as cubic splines (those overshoot and cut corners).
+        """
 
         min_edges: int = 10
         cluster_span: float | None = None
@@ -1111,10 +1117,10 @@ class Mesh:
             )
         max_deviation = settings.max_deviation
         if max_deviation is None:
-            max_deviation = max(
-                0.5 * cluster_span,
-                2.0 * finest_surface_mesh_size,
-            )
+            # Strict default (mesh units). The old ~0.5*cluster_span (~50)
+            # accepted coupler fillets, which then became cubic splines and
+            # cut corners. Keep packs nearly flat unless the user overrides.
+            max_deviation = max(0.5, 0.05 * finest_surface_mesh_size)
         return Mesh.BoundarySimplifySettings(
             min_edges=settings.min_edges,
             cluster_span=cluster_span,
@@ -1158,11 +1164,12 @@ class Mesh:
     def _is_colinear_chain(
         points: list[tuple[float, float]], tol_deg: float = 3.0
     ) -> bool:
+        """True when every vertex deflects by at most ``tol_deg`` from a straight walk."""
         if len(points) <= 2:
             return True
         for idx in range(1, len(points) - 1):
             if (
-                Mesh._turn_angle_deg(
+                Mesh._deflection_angle_deg(
                     points[idx - 1], points[idx], points[idx + 1]
                 )
                 > tol_deg
@@ -1171,24 +1178,9 @@ class Mesh:
         return True
 
     @staticmethod
-    def _subsample_polyline_points(
-        points: list[tuple[float, float]], max_points: int = 12
-    ) -> list[tuple[float, float]]:
-        if len(points) <= max_points:
-            return points
-        indices = np.linspace(0, len(points) - 1, max_points, dtype=int)
-        out: list[tuple[float, float]] = []
-        for idx in indices:
-            pt = points[int(idx)]
-            if not out or pt != out[-1]:
-                out.append(pt)
-        return out
-
-    @staticmethod
     def _chain_max_deviation(chain: list[tuple[float, float]]) -> float:
+        """Max distance from intermediate vertices to the endpoint chord (sagitta)."""
         if len(chain) <= 2:
-            return 0.0
-        if Mesh._is_colinear_chain(chain):
             return 0.0
         chord = LineString([chain[0], chain[-1]])
         return max(Point(xy).distance(chord) for xy in chain[1:-1])
@@ -1282,7 +1274,13 @@ class Mesh:
 
             if edge_count >= settings.min_edges:
                 deviation = Mesh._chain_max_deviation(chain)
-                if deviation <= settings.max_deviation:
+                # Belt-and-suspenders: only nearly-flat packs merge. Curved
+                # fillets stay as original QM edges (avoids corner cutouts).
+                # Emission collapses flat packs to an endpoint Line.
+                if (
+                    deviation <= settings.max_deviation
+                    and Mesh._is_colinear_chain(chain)
+                ):
                     chains.append(chain)
                     edges_processed += edge_count
                     start = j % n
@@ -1295,12 +1293,38 @@ class Mesh:
         return chains
 
     @staticmethod
+    def _gmsh_add_polyline_lines(
+        gmsh: Any,
+        points: list[tuple[float, float]],
+        z: float,
+        lc: float,
+    ) -> list[int]:
+        """Emit consecutive OCC lines through ``points`` (exact polyline)."""
+        if len(points) < 2:
+            raise ValueError("polyline requires at least two points")
+        point_tags = [
+            gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
+            for x, y in points
+        ]
+        return [
+            gmsh.model.occ.addLine(point_tags[i], point_tags[i + 1])
+            for i in range(len(point_tags) - 1)
+        ]
+
+    @staticmethod
     def _gmsh_add_curve_chain(
         gmsh: Any,
         points: list[tuple[float, float]],
         z: float,
         lc: float,
-    ) -> int:
+    ) -> list[int]:
+        """
+        Build OCC curve(s) for a boundary chain.
+
+        Flat / two-point runs become a single Line. Multi-point runs keep every
+        vertex as a degree-1 BSpline (polyline curve) — never cubic ``addSpline``,
+        which overshoots fillets and cuts coupler corners.
+        """
         if len(points) < 2:
             raise ValueError("curve chain requires at least two points")
 
@@ -1311,14 +1335,21 @@ class Mesh:
             p1 = gmsh.model.occ.addPoint(
                 float(points[-1][0]), float(points[-1][1]), float(z), lc
             )
-            return gmsh.model.occ.addLine(p0, p1)
+            return [gmsh.model.occ.addLine(p0, p1)]
 
-        spline_pts = Mesh._subsample_polyline_points(points)
         point_tags = [
             gmsh.model.occ.addPoint(float(x), float(y), float(z), lc)
-            for x, y in spline_pts
+            for x, y in points
         ]
-        return gmsh.model.occ.addSpline(point_tags)
+        try:
+            return [gmsh.model.occ.addBSpline(point_tags, degree=1)]
+        except TypeError:
+            try:
+                return [gmsh.model.occ.addBSpline(point_tags, -1, 1)]
+            except Exception:
+                return Mesh._gmsh_add_polyline_lines(gmsh, points, z, lc)
+        except Exception:
+            return Mesh._gmsh_add_polyline_lines(gmsh, points, z, lc)
 
     @staticmethod
     def _gmsh_add_polygon_surface(
@@ -1376,9 +1407,11 @@ class Mesh:
                     [ring[i], ring[(i + 1) % len(ring)]]
                     for i in range(len(ring))
                 ]
-            curves = [
-                Mesh._gmsh_add_curve_chain(gmsh, chain, z, lc) for chain in chains
-            ]
+            curves: list[int] = []
+            for chain in chains:
+                curves.extend(
+                    Mesh._gmsh_add_curve_chain(gmsh, chain, z, lc)
+                )
             return gmsh.model.occ.addCurveLoop(curves)
 
         outer = wire_from_ring(list(polygon.exterior.coords), reverse=False)
@@ -1624,8 +1657,9 @@ class Mesh:
             Tolerance used for face-to-polygon classification, as a fraction of
             the finest surface mesh size after scaling.
         enable_boundary_simplify:
-            When ``True`` (default), merge short polygon edge runs before
-            imprinting. Set ``False`` to imprint one Gmsh edge per QM segment.
+            When ``True`` (default), merge short nearly-flat polygon edge runs
+            before imprinting. Curved fillets are left alone so corners stay
+            true to QM. Set ``False`` to imprint one Gmsh edge per QM segment.
         boundary_simplify:
             Optional full :class:`BoundarySimplifySettings` override. When
             omitted and simplification is enabled, ``simplify_*`` kwargs set
@@ -1633,6 +1667,10 @@ class Mesh:
         simplify_min_edges, simplify_cluster_span, simplify_short_edge,
         simplify_smooth_angle_deg, simplify_max_deviation:
             Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
+            ``simplify_max_deviation`` is in mesh units (after ``mesh_scale``).
+            The auto default is strict (~0.5) so coupler fillets are not merged
+            into geometry-inventing curves. Raise it only if you accept more
+            aggressive packing; emission never uses cubic splines.
         """
         
         import gmsh
@@ -2144,7 +2182,8 @@ class Mesh:
                         f"{gmsh_curves} Gmsh curves "
                         f"({merged_runs} merged runs; "
                         f"short_edge={resolved.short_edge / mesh_scale:.4g} mm, "
-                        f"cluster_span={resolved.cluster_span / mesh_scale:.4g} mm)"
+                        f"cluster_span={resolved.cluster_span / mesh_scale:.4g} mm, "
+                        f"max_deviation={resolved.max_deviation / mesh_scale:.4g} mm)"
                     )
                     if merged_runs == 0:
                         print(
