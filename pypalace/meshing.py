@@ -1080,10 +1080,14 @@ class Mesh:
     class BoundarySimplifySettings:
         """Heuristic short-edge run merging for polygon imprint boundaries.
 
-        Merges runs of tiny QM edges into fewer Gmsh curves. Only nearly-flat
-        packs are accepted by default; curved fillet packs stay as original
-        edges so coupler corners are not rewritten. Merged runs are never
-        emitted as cubic splines (those overshoot and cut corners).
+        Merges runs of tiny QM edges into fewer Gmsh curves. Emission is
+        geometry-exact for the control polyline: flat packs become an endpoint
+        Line; curved packs become a degree-1 BSpline through every vertex
+        (never cubic ``addSpline``, which overshoots fillets).
+
+        Separately, ``enable_boundary_compound`` can mark leftover short plane
+        edges as Gmsh compounds (best-effort; OCC compounds do not always
+        remove 1D pinning).
         """
 
         min_edges: int = 10
@@ -1117,10 +1121,13 @@ class Mesh:
             )
         max_deviation = settings.max_deviation
         if max_deviation is None:
-            # Strict default (mesh units). The old ~0.5*cluster_span (~50)
-            # accepted coupler fillets, which then became cubic splines and
-            # cut corners. Keep packs nearly flat unless the user overrides.
-            max_deviation = max(0.5, 0.05 * finest_surface_mesh_size)
+            # With degree-1 emission, sagitta is not a geometry-risk gate
+            # (the curve still hits every vertex). Allow curved packs so
+            # fillets/circles can become one size-driven curve.
+            max_deviation = max(
+                0.5 * cluster_span,
+                2.0 * finest_surface_mesh_size,
+            )
         return Mesh.BoundarySimplifySettings(
             min_edges=settings.min_edges,
             cluster_span=cluster_span,
@@ -1274,13 +1281,10 @@ class Mesh:
 
             if edge_count >= settings.min_edges:
                 deviation = Mesh._chain_max_deviation(chain)
-                # Belt-and-suspenders: only nearly-flat packs merge. Curved
-                # fillets stay as original QM edges (avoids corner cutouts).
-                # Emission collapses flat packs to an endpoint Line.
-                if (
-                    deviation <= settings.max_deviation
-                    and Mesh._is_colinear_chain(chain)
-                ):
+                # Accept curved packs: emission is degree-1 through every
+                # vertex (exact polyline), not cubic. max_deviation only
+                # limits how bowed a single pack may be.
+                if deviation <= settings.max_deviation:
                     chains.append(chain)
                     edges_processed += edge_count
                     start = j % n
@@ -1350,6 +1354,270 @@ class Mesh:
                 return Mesh._gmsh_add_polyline_lines(gmsh, points, z, lc)
         except Exception:
             return Mesh._gmsh_add_polyline_lines(gmsh, points, z, lc)
+
+    @staticmethod
+    def _gmsh_curve_endpoint_xyz(
+        gmsh: Any, tag: int
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+        """Return endpoint coordinates of a curve, or None if unavailable."""
+        try:
+            umin, umax = gmsh.model.getParametrizationBounds(1, tag)
+            u0 = float(umin[0]) if hasattr(umin, "__getitem__") else float(umin)
+            u1 = float(umax[0]) if hasattr(umax, "__getitem__") else float(umax)
+            p0 = gmsh.model.getValue(1, tag, [u0])
+            p1 = gmsh.model.getValue(1, tag, [u1])
+            return (
+                (float(p0[0]), float(p0[1]), float(p0[2])),
+                (float(p1[0]), float(p1[1]), float(p1[2])),
+            )
+        except Exception:
+            try:
+                verts = [
+                    t
+                    for d, t in gmsh.model.getBoundary(
+                        [(1, tag)], oriented=False, recursive=False
+                    )
+                    if d == 0
+                ]
+                if len(verts) < 2:
+                    return None
+                p0 = gmsh.model.getValue(0, verts[0], [])
+                p1 = gmsh.model.getValue(0, verts[1], [])
+                return (
+                    (float(p0[0]), float(p0[1]), float(p0[2])),
+                    (float(p1[0]), float(p1[1]), float(p1[2])),
+                )
+            except Exception:
+                return None
+
+    @staticmethod
+    def _gmsh_curve_chord_length(gmsh: Any, tag: int) -> float:
+        ends = Mesh._gmsh_curve_endpoint_xyz(gmsh, tag)
+        if ends is None:
+            bbox = gmsh.model.getBoundingBox(1, tag)
+            return math.hypot(
+                bbox[3] - bbox[0], bbox[4] - bbox[1], bbox[5] - bbox[2]
+            )
+        a, b = ends
+        return math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+
+    @staticmethod
+    def _collect_short_curve_compound_runs(
+        gmsh: Any,
+        *,
+        short_edge: float,
+        min_edges: int,
+        smooth_angle_deg: float,
+        z0: float = 0.0,
+        z_tol: float = 1e-6,
+    ) -> list[list[int]]:
+        """
+        Find chains of short plane curves to compound for meshing.
+
+        Geometry is left unchanged; ``mesh.setCompound`` later treats each run
+        as one discrete curve so tiny QM fillet/circle edges do not force a
+        mesh node at every vertex.
+        """
+        min_edges = max(2, int(min_edges))
+        edge_verts: dict[int, tuple[int, int]] = {}
+        edge_len: dict[int, float] = {}
+        vert_xyz: dict[int, tuple[float, float, float]] = {}
+
+        for _, tag in gmsh.model.getEntities(1):
+            ends = Mesh._gmsh_curve_endpoint_xyz(gmsh, tag)
+            if ends is None:
+                continue
+            p0, p1 = ends
+            if abs(p0[2] - z0) > z_tol or abs(p1[2] - z0) > z_tol:
+                continue
+            length = math.hypot(
+                p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+            )
+            if length > short_edge or length <= 0.0:
+                continue
+            boundary = [
+                t
+                for d, t in gmsh.model.getBoundary(
+                    [(1, tag)], oriented=False, recursive=False
+                )
+                if d == 0
+            ]
+            if len(boundary) < 2:
+                continue
+            v0, v1 = int(boundary[0]), int(boundary[1])
+            try:
+                c0 = gmsh.model.getValue(0, v0, [])
+                c1 = gmsh.model.getValue(0, v1, [])
+                xyz0 = (float(c0[0]), float(c0[1]), float(c0[2]))
+                xyz1 = (float(c1[0]), float(c1[1]), float(c1[2]))
+            except Exception:
+                xyz0, xyz1 = p0, p1
+            edge_verts[int(tag)] = (v0, v1)
+            edge_len[int(tag)] = length
+            vert_xyz[v0] = xyz0
+            vert_xyz[v1] = xyz1
+
+        if not edge_verts:
+            return []
+
+        vert_to_edges: dict[int, list[int]] = defaultdict(list)
+        for edge, (v0, v1) in edge_verts.items():
+            vert_to_edges[v0].append(edge)
+            vert_to_edges[v1].append(edge)
+
+        def other_vertex(edge: int, vertex: int) -> int:
+            v0, v1 = edge_verts[edge]
+            return v1 if vertex == v0 else v0
+
+        def traverse_ok(vertex: int, e_in: int, e_out: int) -> bool:
+            """Allow chaining through ``vertex`` only for smooth degree-2 bends."""
+            if e_in == e_out:
+                return False
+            nbrs = vert_to_edges.get(vertex, [])
+            if len(nbrs) != 2:
+                return False
+            a = other_vertex(e_in, vertex)
+            c = other_vertex(e_out, vertex)
+            pa = vert_xyz[a]
+            pb = vert_xyz[vertex]
+            pc = vert_xyz[c]
+            turn = Mesh._deflection_angle_deg(
+                (pa[0], pa[1]), (pb[0], pb[1]), (pc[0], pc[1])
+            )
+            return turn <= smooth_angle_deg
+
+        # Adjacency between short edges (smooth interior vertices only).
+        neighbors: dict[int, list[int]] = defaultdict(list)
+        for vertex, edges in vert_to_edges.items():
+            if len(edges) != 2:
+                continue
+            e0, e1 = edges[0], edges[1]
+            if traverse_ok(vertex, e0, e1):
+                neighbors[e0].append(e1)
+                neighbors[e1].append(e0)
+
+        visited: set[int] = set()
+        runs: list[list[int]] = []
+
+        def walk_path(start: int) -> list[int]:
+            run = [start]
+            visited.add(start)
+            # Extend toward higher indices first.
+            prev: int | None = None
+            curr = start
+            while True:
+                opts = [n for n in neighbors.get(curr, []) if n != prev and n not in visited]
+                if len(opts) != 1:
+                    break
+                prev, curr = curr, opts[0]
+                visited.add(curr)
+                run.append(curr)
+            # Extend the other way from the original start.
+            prev = run[1] if len(run) > 1 else None
+            curr = start
+            while True:
+                opts = [n for n in neighbors.get(curr, []) if n != prev and n not in visited]
+                if len(opts) != 1:
+                    break
+                prev, curr = curr, opts[0]
+                visited.add(curr)
+                run.insert(0, curr)
+            return run
+
+        def walk_cycle(start: int) -> list[int]:
+            run = [start]
+            visited.add(start)
+            prev: int | None = None
+            curr = start
+            while True:
+                opts = [n for n in neighbors.get(curr, []) if n != prev]
+                if not opts:
+                    break
+                unvisited = [n for n in opts if n not in visited]
+                if len(unvisited) >= 1:
+                    # At the seed of a cycle both neighbors are unvisited;
+                    # pick a stable direction and walk until closure.
+                    nxt = unvisited[0]
+                else:
+                    break
+                prev, curr = curr, nxt
+                visited.add(curr)
+                run.append(curr)
+                if curr == start or len(run) > len(edge_verts):
+                    break
+            if run and run[-1] == start and len(run) > 1:
+                run.pop()
+            return run
+
+        endpoints = [
+            e for e in edge_verts if len(neighbors.get(e, [])) <= 1
+        ]
+        for start in endpoints:
+            if start not in visited:
+                run = walk_path(start)
+                if len(run) >= min_edges:
+                    runs.append(run)
+        for start in list(edge_verts):
+            if start not in visited:
+                run = walk_cycle(start) if len(neighbors.get(start, [])) == 2 else walk_path(start)
+                if len(run) >= min_edges:
+                    runs.append(run)
+
+        return runs
+
+    @staticmethod
+    def _apply_boundary_curve_compounds(
+        gmsh: Any,
+        *,
+        short_edge: float,
+        min_edges: int,
+        smooth_angle_deg: float,
+        z0: float = 0.0,
+        z_tol: float = 1e-6,
+    ) -> dict[str, int]:
+        """Compound short plane-curve runs so meshing is not pinned to every vertex."""
+        runs = Mesh._collect_short_curve_compound_runs(
+            gmsh,
+            short_edge=short_edge,
+            min_edges=min_edges,
+            smooth_angle_deg=smooth_angle_deg,
+            z0=z0,
+            z_tol=z_tol,
+        )
+        compounded_edges = 0
+        for run in runs:
+            gmsh.model.mesh.setCompound(1, run)
+            compounded_edges += len(run)
+
+        # Surfaces incident to compounded curves also need a compound
+        # constraint for Gmsh to treat the virtual topology as intended.
+        compounded = {e for run in runs for e in run}
+        surface_tags: set[int] = set()
+        if compounded:
+            for _, face in gmsh.model.getEntities(2):
+                try:
+                    _, _, z = gmsh.model.occ.getCenterOfMass(2, face)
+                except Exception:
+                    continue
+                if abs(z - z0) > z_tol:
+                    continue
+                boundary_curves = [
+                    t
+                    for d, t in gmsh.model.getBoundary(
+                        [(2, face)], oriented=False, recursive=False
+                    )
+                    if d == 1
+                ]
+                if any(tag in compounded for tag in boundary_curves):
+                    surface_tags.add(int(face))
+            if surface_tags:
+                gmsh.model.mesh.setCompound(2, sorted(surface_tags))
+
+        return {
+            "compound_runs": len(runs),
+            "compounded_edges": compounded_edges,
+            "compounded_surfaces": len(surface_tags),
+        }
 
     @staticmethod
     def _gmsh_add_polygon_surface(
@@ -1601,13 +1869,18 @@ class Mesh:
         simplify_short_edge: float | None = None,
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
+        enable_boundary_compound: bool = True,
+        compound_min_edges: int = 6,
     ):
         """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
            Only for coplanar designs.
 
-        Polygon boundaries are simplified by default: runs of many small QM
-        edges (circles, meander bends, fillets) are merged into fewer Gmsh
-        lines/splines before imprinting.
+        Polygon boundaries keep QM polyline vertices. Short-edge runs merge
+        into fewer Gmsh curves without cubic overshoot: flat packs become a
+        Line; curved packs become a degree-1 BSpline through every vertex.
+        Optionally, leftover short plane edges can be marked as Gmsh
+        compounds (``enable_boundary_compound``) as a best-effort extra
+        anti-hypermesh step after imprint.
 
         Parameters
         ----------
@@ -1657,9 +1930,8 @@ class Mesh:
             Tolerance used for face-to-polygon classification, as a fraction of
             the finest surface mesh size after scaling.
         enable_boundary_simplify:
-            When ``True`` (default), merge short nearly-flat polygon edge runs
-            before imprinting. Curved fillets are left alone so corners stay
-            true to QM. Set ``False`` to imprint one Gmsh edge per QM segment.
+            When ``True`` (default), merge short polygon edge runs before
+            imprinting into Lines / degree-1 BSplines (never cubic).
         boundary_simplify:
             Optional full :class:`BoundarySimplifySettings` override. When
             omitted and simplification is enabled, ``simplify_*`` kwargs set
@@ -1668,9 +1940,13 @@ class Mesh:
         simplify_smooth_angle_deg, simplify_max_deviation:
             Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
             ``simplify_max_deviation`` is in mesh units (after ``mesh_scale``).
-            The auto default is strict (~0.5) so coupler fillets are not merged
-            into geometry-inventing curves. Raise it only if you accept more
-            aggressive packing; emission never uses cubic splines.
+        enable_boundary_compound:
+            When ``True`` (default), after imprint mark runs of short plane
+            curves as Gmsh compounds. Best-effort: OCC compounds do not always
+            remove 1D pinning; degree-1 merges are the primary anti-hypermesh
+            tool.
+        compound_min_edges:
+            Minimum short edges in a smooth run before compounding (default 6).
         """
         
         import gmsh
@@ -2159,6 +2435,36 @@ class Mesh:
             gmsh.option.setNumber("Mesh.SaveAll", 0)
             gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
+            compound_stats: dict[str, int] | None = None
+            if enable_boundary_compound:
+                compound_source = (
+                    boundary_simplify
+                    if boundary_simplify is not None
+                    else Mesh.BoundarySimplifySettings(
+                        min_edges=simplify_min_edges,
+                        cluster_span=simplify_cluster_span,
+                        short_edge=simplify_short_edge,
+                        smooth_angle_deg=simplify_smooth_angle_deg,
+                        max_deviation=simplify_max_deviation,
+                    )
+                )
+                compound_resolved = Mesh._resolve_boundary_simplify_settings(
+                    compound_source,
+                    surface_mesh_size,
+                    mesh_scale,
+                    finest_surface_mesh_size=finest_surface_mesh_size,
+                )
+                compound_stats = Mesh._apply_boundary_curve_compounds(
+                    gmsh,
+                    short_edge=float(compound_resolved.short_edge),
+                    min_edges=max(2, int(compound_min_edges)),
+                    smooth_angle_deg=float(
+                        compound_resolved.smooth_angle_deg
+                    ),
+                    z0=0.0,
+                    z_tol=geom_tol,
+                )
+
             gmsh.model.mesh.generate(3)
             gmsh.write(str(output_path))
 
@@ -2191,6 +2497,21 @@ class Mesh:
                             "try lowering simplify_min_edges or raising "
                             "simplify_cluster_span / simplify_short_edge."
                         )
+
+            if compound_stats is not None:
+                print(
+                    "boundary compound: "
+                    f"{compound_stats.get('compounded_edges', 0)} short edges in "
+                    f"{compound_stats.get('compound_runs', 0)} compound runs "
+                    f"({compound_stats.get('compounded_surfaces', 0)} surfaces; "
+                    f"min_edges={max(2, int(compound_min_edges))})"
+                )
+                if compound_stats.get("compound_runs", 0) == 0:
+                    print(
+                        "USER WARNING: boundary compound found 0 short-edge runs; "
+                        "try lowering compound_min_edges or raising "
+                        "simplify_short_edge."
+                    )
 
         finally:
             if owns_gmsh and gmsh.isInitialized():
