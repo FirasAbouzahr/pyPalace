@@ -9,6 +9,11 @@ import json
 import numpy as np
 import os
 
+# Palace configuration SchemaVer targeted by this Config interface.
+# Corresponds to the ``$id`` field ``urn:palace:schema:<ver>`` in Palace's
+# ``config-schema.json``. Bump when wrapping newer Palace config fields.
+PALACE_SCHEMA_VER = "1-5-0"
+
 class Config:
 
     """
@@ -21,6 +26,13 @@ class Config:
     ----------
     config_name : str
         Name of the configuration and path where the JSON file will be saved.
+
+    Notes
+    -----
+    Helpers in :mod:`pypalace.builder` target Palace SchemaVer
+    :data:`PALACE_SCHEMA_VER`. Optional full JSON-schema validation is available
+    via :meth:`validate_schema` when ``jsonschema`` and a Palace schema file are
+    present.
     """
     
     
@@ -30,6 +42,7 @@ class Config:
         self.tracker = []
         self.config = {}
         self.saved = False
+        self.schema_ver = PALACE_SCHEMA_VER
         
     @classmethod
     def load_config(cls, config_name):
@@ -53,7 +66,7 @@ class Config:
 
         return this_config
         
-    def add_Problem(self, Type: str, Output: str, Verbose=2):
+    def add_Problem(self, Type: str, Output: str, Verbose=2, OutputFormats=None):
         """
         Add ``Problem`` block to the Palace configuration.
         
@@ -69,6 +82,9 @@ class Config:
             Directory path where simulation results will be saved.
         Verbose : int, optional
             Verbosity level of the Palace log file (default is 2).
+        OutputFormats : dict, optional
+            Optional ``config["Problem"]["OutputFormats"]`` dictionary, e.g.
+            ``{"Paraview": True, "GridFunction": False}``.
         """
     
         self.tracker.append("Problem")
@@ -77,15 +93,18 @@ class Config:
         if self.Type == "Boundarymode":
             self.Type = "BoundaryMode"
             
-        valid_types = ["Eigenmode","Driven","Transient","Electrostatic","Magnetostatic"]
+        valid_types = ["Eigenmode","Driven","Transient","Electrostatic","Magnetostatic","BoundaryMode"]
         
         if self.Type not in valid_types:
-            raise ValueError('Invalid Type specified, valid options are "Eigenmode","Driven","Transient","Electrostatic","Magnetostatic"')
+            raise ValueError('Invalid Type specified, valid options are "Eigenmode","Driven","Transient","Electrostatic","Magnetostatic","BoundaryMode"')
             
 
         self.config["Problem"] = {"Type":Type,
                                "Verbose":Verbose,
                                "Output":Output}
+
+        if OutputFormats != None:
+            self.config["Problem"]["OutputFormats"] = OutputFormats
 
     def add_Model(self,Mesh:str,L0=1.0e-6,Lc=None,Refinement=None):
         """
@@ -119,7 +138,7 @@ class Config:
 
         self.config["Model"] = model_dict
 
-    def add_Domains(self,Materials,Postprocessing = []):
+    def add_Domains(self,Materials,Postprocessing = [],CurrentDipole = None):
         """
         Add ``Domains`` block to the Palace configuration.
 
@@ -131,6 +150,8 @@ class Config:
             List of material definitions generated using :func:`pypalace.builder.Domains.Material`.
         Postprocessing : list, optional
             List of Domains postprocessing definitions generated using :mod:`pypalace.builder.Domains` postprocessing functions.
+        CurrentDipole : list, optional
+            List of current dipole definitions generated using :func:`pypalace.builder.Domains.CurrentDipole`.
         """
     
         self.tracker.append("Domains")
@@ -142,6 +163,7 @@ class Config:
         Postprocessing_labels = ["Energy","Probe"]
         
         if len(Postprocessing) != 0:
+            postprocessing_dict = {}
             for lab in Postprocessing_labels:
 
                 mask = Postprocessing[:, 1] == lab
@@ -151,6 +173,9 @@ class Config:
                     postprocessing_dict[lab] = list(current)
 
                 domain_dict["Postprocessing"] = postprocessing_dict
+
+        if CurrentDipole != None:
+            domain_dict["CurrentDipole"] = list(CurrentDipole)
 
         self.config["Domains"] = domain_dict
         
@@ -179,7 +204,7 @@ class Config:
         Postprocessing = np.array(Postprocessing)
         
         BC_labels_scalartype = ["PEC","PMC","Absorbing","WavePortPEC","Ground","ZeroCharge","Periodic"]
-        BC_labels_arraytype = ["Impedance","Conductivity","LumpedPort","WavePort","SurfaceCurrent","Terminal"]
+        BC_labels_arraytype = ["Impedance","RationalImpedance","Conductivity","LumpedPort","WavePort","FloquetPort","FluxLoop","SurfaceCurrent","Terminal"]
 
         
         for lab in BC_labels_scalartype:
@@ -256,7 +281,34 @@ class Config:
 
         self.config["Solver"] = solver_dict
 
-    def save_config(self,check_validity = True):
+    def validate_schema(self, schema_path):
+        """
+        Validate the current configuration against a Palace ``config-schema.json``.
+
+        Requires the optional ``jsonschema`` package. SchemaVer targeted by pyPalace
+        helpers is :data:`PALACE_SCHEMA_VER`.
+
+        Parameters
+        ----------
+        schema_path : str
+            Path to Palace ``config-schema.json``.
+        """
+
+        try:
+            import jsonschema
+        except ImportError:
+            raise ImportError(
+                "Schema validation requires the optional 'jsonschema' package. "
+                "Install it with: pip install jsonschema"
+            )
+
+        with open(schema_path, "r") as f:
+            schema = json.load(f)
+
+        jsonschema.validate(instance=self.config, schema=schema)
+        return True
+
+    def save_config(self,check_validity = True, schema_path=None):
     
         """
         Saves Config object as AWS Palace .JSON configuration file.
@@ -265,6 +317,9 @@ class Config:
         ----------
         check_validity : bool, optional
             If True, check that all required configuration blocks have been defined before saving (default True).
+        schema_path : str, optional
+            If provided, validate the configuration against this Palace JSON schema
+            before writing (requires ``jsonschema``).
         """
     
         self.saved = True
@@ -273,6 +328,9 @@ class Config:
         directory = os.path.dirname(self.config_name)
         if directory:
             os.makedirs(directory, exist_ok=True)
+
+        if schema_path != None:
+            self.validate_schema(schema_path)
         
         if check_validity == True:
             validity_counter = []
@@ -304,5 +362,3 @@ class Config:
         
         print(json.dumps(self.config, indent=2))
         
-
-
