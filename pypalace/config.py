@@ -9,11 +9,6 @@ import json
 import numpy as np
 import os
 
-# Palace configuration SchemaVer targeted by this Config interface.
-# Corresponds to the ``$id`` field ``urn:palace:schema:<ver>`` in Palace's
-# ``config-schema.json``. Bump when wrapping newer Palace config fields.
-PALACE_SCHEMA_VER = "1-5-0"
-
 class Config:
 
     """
@@ -29,10 +24,9 @@ class Config:
 
     Notes
     -----
-    Helpers in :mod:`pypalace.builder` target Palace SchemaVer
-    :data:`PALACE_SCHEMA_VER`. Optional full JSON-schema validation is available
-    via :meth:`validate_schema` when ``jsonschema`` and a Palace schema file are
-    present.
+    Optional full JSON-schema validation against a Palace ``config-schema.json``
+    is available via :meth:`validate_schema` (or ``save_config(schema_path=...)``)
+    when the optional ``jsonschema`` package is installed.
     """
     
     
@@ -42,7 +36,6 @@ class Config:
         self.tracker = []
         self.config = {}
         self.saved = False
-        self.schema_ver = PALACE_SCHEMA_VER
         
     @classmethod
     def load_config(cls, config_name):
