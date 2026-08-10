@@ -9,8 +9,6 @@ import json
 import numpy as np
 import os
 
-from .palace_env import get_palace_schema
-
 class Config:
 
     """
@@ -23,13 +21,6 @@ class Config:
     ----------
     config_name : str
         Name of the configuration and path where the JSON file will be saved.
-
-    Notes
-    -----
-    Schema validation is not run at save time (Palace may not be configured yet).
-    :class:`~pypalace.simulation.Simulation` validates against the schema near
-    ``path_to_palace`` when a Simulation is created. You can also call
-    :meth:`validate_schema` manually.
     """
     
     
@@ -276,68 +267,6 @@ class Config:
             solver_dict["Linear"] = Linear
 
         self.config["Solver"] = solver_dict
-
-    def validate_schema(self, schema_path=None, path_to_palace=None):
-        """
-        Validate the current configuration against a Palace ``config-schema.json``.
-
-        If ``schema_path`` is omitted, the schema is located via
-        :func:`pypalace.palace_env.get_palace_schema`, preferring a walk from
-        ``path_to_palace`` when provided (as in :class:`~pypalace.simulation.Simulation`).
-
-        Missing schema or missing optional ``jsonschema`` package prints a
-        ``USER WARNING`` and returns ``False`` without raising. When a schema is
-        available, validation failures raise ``ValueError``.
-
-        Parameters
-        ----------
-        schema_path : str, optional
-            Explicit path to Palace ``config-schema.json``. If omitted, auto-detect.
-        path_to_palace : str, optional
-            Palace executable used as the auto-detect anchor when ``schema_path``
-            is omitted.
-
-        Returns
-        -------
-        bool
-            ``True`` if validation succeeded, ``False`` if schema/jsonschema was
-            unavailable (warning already printed).
-        """
-
-        if schema_path == None:
-            schema_path = get_palace_schema(path_to_palace=path_to_palace)
-
-        if schema_path == None:
-            print(
-                "USER WARNING: Could not locate Palace config-schema.json; "
-                "skipping schema validation. Set PALACE_SCHEMA / PATH_TO_PALACE_SCHEMA, "
-                "or point path_to_palace at a Palace source/install tree that contains "
-                "scripts/schema/config-schema.json."
-            )
-            return False
-
-        try:
-            import jsonschema
-        except ImportError:
-            print(
-                "USER WARNING: Optional package 'jsonschema' is not installed; "
-                "skipping schema validation. Install with: pip install jsonschema"
-            )
-            return False
-
-        with open(schema_path, "r") as f:
-            schema = json.load(f)
-
-        try:
-            jsonschema.validate(instance=self.config, schema=schema)
-        except jsonschema.ValidationError as e:
-            raise ValueError(
-                "Palace configuration failed schema validation against {}: {}".format(
-                    schema_path, e.message
-                )
-            )
-
-        return True
 
     def save_config(self,check_validity = True):
     

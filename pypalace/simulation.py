@@ -51,9 +51,6 @@ class Simulation:
         self.path_to_palace = path_to_palace
         self.config = config
         self.path_to_json = self.config.config_name
-
-        # Validate against the schema near this Palace when available (warn if not).
-        self.config.validate_schema(path_to_palace=path_to_palace)
         
     def HPC_options(partition,time,nodes,ntasks_per_node,mem,job_name,custom = None):
         
