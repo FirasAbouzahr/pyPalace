@@ -36,14 +36,22 @@ def get_palace_executable() -> str:
     )
 
 
-def get_palace_schema():
+def get_palace_schema(path_to_palace=None):
     """
     Locate Palace ``config-schema.json`` for optional config validation.
 
     Search order:
     1. ``PALACE_SCHEMA`` or ``PATH_TO_PALACE_SCHEMA`` environment variable
-    2. Walk upward from the Palace executable (and ``PATH_TO_PALACE``) looking for
-       ``scripts/schema/config-schema.json`` (Palace source-tree layout)
+    2. Walk upward from ``path_to_palace`` (typically the executable passed to
+       :class:`~pypalace.simulation.Simulation`) looking for
+       ``scripts/schema/config-schema.json``
+    3. Same walk from ``PATH_TO_PALACE`` / an auto-detected Palace executable
+
+    Parameters
+    ----------
+    path_to_palace : str, optional
+        Path to a Palace executable. When constructing a Simulation this is the
+        natural anchor for finding the matching schema.
 
     Returns
     -------
@@ -62,6 +70,9 @@ def get_palace_schema():
             )
 
     search_roots = []
+
+    if path_to_palace != None:
+        search_roots.append(Path(path_to_palace).expanduser().resolve())
 
     if env_palace := os.environ.get("PATH_TO_PALACE"):
         search_roots.append(Path(env_palace).expanduser().resolve())

@@ -26,10 +26,10 @@ class Config:
 
     Notes
     -----
-    On save, :meth:`save_config` attempts to validate against Palace's
-    ``config-schema.json`` when it can be auto-located (see
-    :func:`pypalace.palace_env.get_palace_schema`). Missing schema or optional
-    ``jsonschema`` dependency produces a ``USER WARNING`` and saving continues.
+    Schema validation is not run at save time (Palace may not be configured yet).
+    :class:`~pypalace.simulation.Simulation` validates against the schema near
+    ``path_to_palace`` when a Simulation is created. You can also call
+    :meth:`validate_schema` manually.
     """
     
     
@@ -277,13 +277,13 @@ class Config:
 
         self.config["Solver"] = solver_dict
 
-    def validate_schema(self, schema_path=None):
+    def validate_schema(self, schema_path=None, path_to_palace=None):
         """
         Validate the current configuration against a Palace ``config-schema.json``.
 
-        If ``schema_path`` is omitted, the schema is located automatically via
-        :func:`pypalace.palace_env.get_palace_schema` (environment variable or
-        near the Palace executable / source tree).
+        If ``schema_path`` is omitted, the schema is located via
+        :func:`pypalace.palace_env.get_palace_schema`, preferring a walk from
+        ``path_to_palace`` when provided (as in :class:`~pypalace.simulation.Simulation`).
 
         Missing schema or missing optional ``jsonschema`` package prints a
         ``USER WARNING`` and returns ``False`` without raising. When a schema is
@@ -293,6 +293,9 @@ class Config:
         ----------
         schema_path : str, optional
             Explicit path to Palace ``config-schema.json``. If omitted, auto-detect.
+        path_to_palace : str, optional
+            Palace executable used as the auto-detect anchor when ``schema_path``
+            is omitted.
 
         Returns
         -------
@@ -302,14 +305,14 @@ class Config:
         """
 
         if schema_path == None:
-            schema_path = get_palace_schema()
+            schema_path = get_palace_schema(path_to_palace=path_to_palace)
 
         if schema_path == None:
             print(
                 "USER WARNING: Could not locate Palace config-schema.json; "
                 "skipping schema validation. Set PALACE_SCHEMA / PATH_TO_PALACE_SCHEMA, "
-                "or ensure PATH_TO_PALACE points into a Palace source/install tree "
-                "that contains scripts/schema/config-schema.json."
+                "or point path_to_palace at a Palace source/install tree that contains "
+                "scripts/schema/config-schema.json."
             )
             return False
 
@@ -336,7 +339,7 @@ class Config:
 
         return True
 
-    def save_config(self,check_validity = True, schema_path=None, validate_against_schema=True):
+    def save_config(self,check_validity = True):
     
         """
         Saves Config object as AWS Palace .JSON configuration file.
@@ -345,12 +348,6 @@ class Config:
         ----------
         check_validity : bool, optional
             If True, check that all required configuration blocks have been defined before saving (default True).
-        schema_path : str, optional
-            Explicit Palace ``config-schema.json`` path. If omitted and
-            ``validate_against_schema`` is True, the schema is auto-detected.
-        validate_against_schema : bool, optional
-            If True (default), attempt schema validation before writing. Missing
-            schema or ``jsonschema`` prints a ``USER WARNING`` and saving continues.
         """
     
         self.saved = True
@@ -359,9 +356,6 @@ class Config:
         directory = os.path.dirname(self.config_name)
         if directory:
             os.makedirs(directory, exist_ok=True)
-
-        if validate_against_schema == True:
-            self.validate_schema(schema_path)
         
         if check_validity == True:
             validity_counter = []
