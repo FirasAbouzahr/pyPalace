@@ -278,8 +278,9 @@ class Config:
         """
         Validate the current configuration against a Palace ``config-schema.json``.
 
-        Requires the optional ``jsonschema`` package. SchemaVer targeted by pyPalace
-        helpers is :data:`PALACE_SCHEMA_VER`.
+        Requires the optional ``jsonschema`` package. Pass the schema file that
+        ships with the Palace install or source tree you intend to run against
+        (typically ``scripts/schema/config-schema.json``).
 
         Parameters
         ----------
