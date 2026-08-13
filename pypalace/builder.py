@@ -473,20 +473,18 @@ class Solver:
         return boundarymode_dict,"BoundaryMode"
         
     @staticmethod
-    def Driven(MinFreq,MaxFreq,FreqStep,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
-        # AdaptiveCircuitSynthesis / AdaptiveCircuitSynthesisDomainOrthogonalization /
-        # AdaptiveGSOrthogonalization are not wrapped yet (port IncludeInSynthesis is).
-        # Those would be optional kwargs on this same Driven helper, not a separate builder.
+    def Driven(MinFreq,MaxFreq,FreqStep,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None,AdaptiveCircuitSynthesis=None,AdaptiveCircuitSynthesisDomainOrthogonalization=None,AdaptiveGSOrthogonalization=None):
         
         driven_dict = {"MinFreq":MinFreq,"MaxFreq":MaxFreq,"FreqStep":FreqStep}
         
-        if AdaptiveTol == None and (Restart != None or AdaptiveMaxSamples != None or AdaptiveConvergenceMemory != None):
+        if AdaptiveTol == None and (Restart != None or AdaptiveMaxSamples != None or AdaptiveConvergenceMemory != None or AdaptiveCircuitSynthesis != None or AdaptiveCircuitSynthesisDomainOrthogonalization != None or AdaptiveGSOrthogonalization != None):
             print("AdaptiveTol not set, ignoring adaptive frequency sweep")
             AdaptiveTol,Restart,AdaptiveMaxSamples,AdaptiveConvergenceMemory = None,None,None,None
+            AdaptiveCircuitSynthesis,AdaptiveCircuitSynthesisDomainOrthogonalization,AdaptiveGSOrthogonalization = None,None,None
         
     
-        driven_list = np.array([SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory])
-        driven_labels = np.array(["SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory"])
+        driven_list = np.array([SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory,AdaptiveCircuitSynthesis,AdaptiveCircuitSynthesisDomainOrthogonalization,AdaptiveGSOrthogonalization],dtype=object)
+        driven_labels = np.array(["SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory","AdaptiveCircuitSynthesis","AdaptiveCircuitSynthesisDomainOrthogonalization","AdaptiveGSOrthogonalization"])
         driven_mask = driven_list[:,] == None
         
         driven_list = driven_list[~driven_mask]
