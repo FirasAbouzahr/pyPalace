@@ -47,6 +47,12 @@ class Model:
     def Refinement_Spheres(Levels,Center,Radius):
         return {"Levels":Levels,"Center":Center,"Radius":Radius}
 
+    # Advanced Model mesh-processing options (MakeSimplex, MakeHexahedral, Partitioning,
+    # RemoveCurvature, ReorderElements, ReorientTetMesh, CleanUnusedElements,
+    # AddInterfaceBoundaryElements, ExportPrerefinedMesh, crack-related flags, etc.)
+    # are intentionally not wrapped here yet. Hand-edit JSON via Config.load_config for now;
+    # a future optional extras surface (e.g. pip install pypalace[advanced]) may expose them.
+
 class Domains:
 
     """
@@ -94,6 +100,14 @@ class Domains:
         
         return dict,"Probe"
 
+    @staticmethod
+    def CurrentDipole(Index,Moment,Center,Direction):
+        dict = {"Index":Index,
+                "Moment":Moment,
+                "Center":Center,
+                "Direction":Direction}
+        return dict
+
 class Boundaries:
 
     """
@@ -132,7 +146,7 @@ class Boundaries:
         return dict,"Absorbing"
         
     @staticmethod
-    def Conductivity(Attributes,Conductivity,Permeability=None,Thickness=None):
+    def Conductivity(Attributes,Conductivity,Permeability=None,Thickness=None,External=None):
     
         dict = {"Attributes":Attributes,
                 "Conductivity":Conductivity}
@@ -142,6 +156,9 @@ class Boundaries:
         
         if Thickness != None:
             dict["Thickness"] = Thickness
+
+        if External != None:
+            dict["External"] = External
         
         return dict,"Conductivity"
         
@@ -161,7 +178,7 @@ class Boundaries:
         return dict,"Terminal"
         
     @staticmethod
-    def LumpedPort(Index,Attributes,Direction,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None):
+    def LumpedPort(Index,Attributes,Direction,CoordinateSystem=None,Excitation=None,Active=None,R=None,L=None,C=None,Rs=None,Ls=None,Cs=None,Elements=None,IncludeInSynthesis=None):
     
         if (R != None or L != None or C != None) and (Rs != None or Ls != None or Cs != None):
             raise ValueError("Cannot combine both circuit (R,L,C) and surface (Rs,Ls,Cs) parameters")
@@ -176,8 +193,8 @@ class Boundaries:
                     "Attributes":Attributes,
                     "Direction":Direction}
 
-        LP_list = np.array([CoordinateSystem,Excitation,Active,R,L,C,Rs,Ls,Cs])
-        LP_labels = np.array(["CoordinateSystem","Excitation","Active","R","L","C","Rs","Ls","Cs"])
+        LP_list = np.array([CoordinateSystem,Excitation,Active,R,L,C,Rs,Ls,Cs,IncludeInSynthesis])
+        LP_labels = np.array(["CoordinateSystem","Excitation","Active","R","L","C","Rs","Ls","Cs","IncludeInSynthesis"])
         LP_mask = LP_list[:,] == None
 
         LP_list = LP_list[~LP_mask]
@@ -201,12 +218,12 @@ class Boundaries:
         return dict
     
     @staticmethod
-    def WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None):
+    def WavePort(Index,Attributes,Excitation=None,Active=None,Mode=None,Offset=None,SolverType=None,MaxIts=None,KSPTol=None,EigenTol=None,Verbose=None,IncludeInSynthesis=None,VoltagePath=None,NSamples=None,PolarityAttributes=None,MaxSize=None):
         dict = {"Index":Index,
                 "Attributes":Attributes}
 
-        WP_list = np.array([Excitation,Active,Mode,Offset,SolverType,MaxIts,KSPTol,EigenTol,Verbose])
-        WP_labels = np.array(["Excitation","Active","Mode","Offset","SolverType","MaxIts","KSPTol","EigenTol","Verbose"])
+        WP_list = np.array([Excitation,Active,Mode,Offset,SolverType,MaxIts,KSPTol,EigenTol,Verbose,IncludeInSynthesis,VoltagePath,NSamples,PolarityAttributes,MaxSize],dtype=object)
+        WP_labels = np.array(["Excitation","Active","Mode","Offset","SolverType","MaxIts","KSPTol","EigenTol","Verbose","IncludeInSynthesis","VoltagePath","NSamples","PolarityAttributes","MaxSize"])
         WP_mask = WP_list[:,] == None
 
         WP_list = WP_list[~WP_mask]
@@ -238,44 +255,89 @@ class Boundaries:
             dict[impedance_labels[i]] = impedance_list[i]
 
         return dict,"Impedance"
-    
-    ## need to fix syntax to match lumped port ##
+
     @staticmethod
-    def SurfaceCurrent(Index,Attributes,Direction,CoordinateSystem=None,Elements=None):
+    def RationalImpedance(Attributes,Numerator,Denominator):
+        dict = {"Attributes":Attributes,
+                "Numerator":Numerator,
+                "Denominator":Denominator}
+        return dict,"RationalImpedance"
+
+    @staticmethod
+    def FloquetPort(Index,Attributes,Excitation=None,IncidentPolarization=None,MaxOrder=None):
         dict = {"Index":Index,
-                "Attributes":Attributes,
+                "Attributes":Attributes}
+
+        FP_list = np.array([Excitation,IncidentPolarization,MaxOrder],dtype=object)
+        FP_labels = np.array(["Excitation","IncidentPolarization","MaxOrder"])
+        FP_mask = FP_list[:,] == None
+
+        FP_list = FP_list[~FP_mask]
+        FP_labels = FP_labels[~FP_mask]
+
+        for i in range(len(FP_list)):
+            dict[FP_labels[i]] = FP_list[i]
+
+        return dict,"FloquetPort"
+
+    @staticmethod
+    def FluxLoop(Index,FluxLoopPEC,HoleAttributes,FluxAmounts,Direction,Regularization=None):
+        dict = {"Index":Index,
+                "FluxLoopPEC":FluxLoopPEC,
+                "HoleAttributes":HoleAttributes,
+                "FluxAmounts":FluxAmounts,
                 "Direction":Direction}
-                
+
+        if Regularization != None:
+            dict["Regularization"] = Regularization
+
+        return dict,"FluxLoop"
+    
+    @staticmethod
+    def SurfaceCurrent(Index,Attributes,Direction,CoordinateSystem=None,Elements=None,InactiveMode=None):
+
+        if Direction != None and Elements != None:
+            raise ValueError("Cannot use both Direction and Elements, set Direction=None to use Elements.")
+
         if Elements != None:
+            dict = {"Index":Index}
+        else:
             dict = {"Index":Index,
-            "Attributes":Attributes,
-            "Elements":Elements}
-            
-        if CoordinateSystem != None:
-            dict["CoordinateSystem"] = CoordinateSystem
-        
+                    "Attributes":Attributes,
+                    "Direction":Direction}
+
+        SC_list = np.array([CoordinateSystem,InactiveMode],dtype=object)
+        SC_labels = np.array(["CoordinateSystem","InactiveMode"])
+        SC_mask = SC_list[:,] == None
+
+        SC_list = SC_list[~SC_mask]
+        SC_labels = SC_labels[~SC_mask]
+
+        for i in range(len(SC_list)):
+            dict[SC_labels[i]] = SC_list[i]
+
+        if Elements != None:
+            dict["Elements"] = Elements
+
         return dict,"SurfaceCurrent"
 
-## coming up in a later release? ##
-#    @staticmethod
-#    def Periodic_BoundaryPair(DonorAttributes, ReceiverAttributes, Translation=None, AffineTransformation=None):
-#        pair_dict = {"DonorAttributes": DonorAttributes, "ReceiverAttributes": ReceiverAttributes}
-#        if Translation != None:
-#            pair_dict["Translation"] = Translation
-#        if AffineTransformation != None:
-#            pair_dict["AffineTransformation"] = AffineTransformation
-#        return pair_dict
+    @staticmethod
+    def Periodic_BoundaryPair(DonorAttributes,ReceiverAttributes,Translation=None,AffineTransformation=None):
+        pair_dict = {"DonorAttributes":DonorAttributes,"ReceiverAttributes":ReceiverAttributes}
+        if Translation != None:
+            pair_dict["Translation"] = Translation
+        if AffineTransformation != None:
+            pair_dict["AffineTransformation"] = AffineTransformation
+        return pair_dict
 
     @staticmethod
-    def Periodic(DonorAttributes, ReceiverAttributes, Translation=None,AffineTransformation=None,FloquetWaveVector=None):
-        periodic_dict = {"DonorAttributes":DonorAttributes,"ReceiverAttributes":ReceiverAttributes}
-        if Translation != None:
-            periodic_dict["Translation"] = Translation
-        if AffineTransformation != None:
-            periodic_dict["AffineTransformation"] = AffineTransformation
+    def Periodic(BoundaryPairs,FloquetWaveVector=None,FloquetReferenceFrequency=None):
+        periodic_dict = {"BoundaryPairs":BoundaryPairs}
         if FloquetWaveVector != None:
             periodic_dict["FloquetWaveVector"] = FloquetWaveVector
-        return periodic_dict, "Periodic"
+        if FloquetReferenceFrequency != None:
+            periodic_dict["FloquetReferenceFrequency"] = FloquetReferenceFrequency
+        return periodic_dict,"Periodic"
 
     @staticmethod
     def Postprocessing_Dielectric(Index,Attributes,Type,Thickness,Permittivity,LossTan=None):
@@ -367,6 +429,10 @@ class Solver:
         
     @staticmethod
     def Eigenmode(Target,Tol=None,MaxIts=None,MaxSize=None,N=1,Save=1,Type="Default"):
+        # Advanced Eigenmode options (NonlinearType, RefineNonlinear, TargetUpper, LinearTol,
+        # MassOrthogonal, PEPLinear, PreconditionerLag*, Scaling, StartVector*, MaxRestart, ...)
+        # are intentionally not wrapped here yet. Hand-edit JSON via Config.load_config for now;
+        # a future optional extras surface (e.g. pip install pypalace[advanced]) may expose them.
 
         eigenmode_dict = {"N":N,
                           "Save":Save,
@@ -407,17 +473,18 @@ class Solver:
         return boundarymode_dict,"BoundaryMode"
         
     @staticmethod
-    def Driven(MinFreq,MaxFreq,FreqStep,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None):
+    def Driven(MinFreq,MaxFreq,FreqStep,SaveStep=None,Samples=None,Save=None,Restart=None,AdaptiveTol=None,AdaptiveMaxSamples=None,AdaptiveConvergenceMemory=None,AdaptiveCircuitSynthesis=None,AdaptiveCircuitSynthesisDomainOrthogonalization=None,AdaptiveGSOrthogonalization=None):
         
         driven_dict = {"MinFreq":MinFreq,"MaxFreq":MaxFreq,"FreqStep":FreqStep}
         
-        if AdaptiveTol == None and (Restart != None or AdaptiveMaxSamples != None or AdaptiveConvergenceMemory != None):
+        if AdaptiveTol == None and (Restart != None or AdaptiveMaxSamples != None or AdaptiveConvergenceMemory != None or AdaptiveCircuitSynthesis != None or AdaptiveCircuitSynthesisDomainOrthogonalization != None or AdaptiveGSOrthogonalization != None):
             print("AdaptiveTol not set, ignoring adaptive frequency sweep")
             AdaptiveTol,Restart,AdaptiveMaxSamples,AdaptiveConvergenceMemory = None,None,None,None
+            AdaptiveCircuitSynthesis,AdaptiveCircuitSynthesisDomainOrthogonalization,AdaptiveGSOrthogonalization = None,None,None
         
     
-        driven_list = np.array([SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory])
-        driven_labels = np.array(["SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory"])
+        driven_list = np.array([SaveStep,Samples,Save,Restart,AdaptiveTol,AdaptiveMaxSamples,AdaptiveConvergenceMemory,AdaptiveCircuitSynthesis,AdaptiveCircuitSynthesisDomainOrthogonalization,AdaptiveGSOrthogonalization],dtype=object)
+        driven_labels = np.array(["SaveStep","Samples","Save","Restart","AdaptiveTol","AdaptiveMaxSamples","AdaptiveConvergenceMemory","AdaptiveCircuitSynthesis","AdaptiveCircuitSynthesisDomainOrthogonalization","AdaptiveGSOrthogonalization"])
         driven_mask = driven_list[:,] == None
         
         driven_list = driven_list[~driven_mask]
@@ -464,6 +531,9 @@ class Solver:
         
     @staticmethod
     def Linear(Type="Default",KSPType="Default",Tol=None,MaxIts=None,MaxSize=None):
+        # Type/KSPType are forwarded as-is; pyPalace does not enumerate or restrict Palace
+        # solver backends (Palace validates). Advanced Linear knobs (MG/AMS/STRUMPACK,
+        # cuDSS-specific options, etc.) are deferred; see pypalace[advanced] note on Model.
 
         Linear_dict = {"Type":Type,
                        "KSPType": KSPType}

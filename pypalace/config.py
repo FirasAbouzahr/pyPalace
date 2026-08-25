@@ -53,7 +53,7 @@ class Config:
 
         return this_config
         
-    def add_Problem(self, Type: str, Output: str, Verbose=2):
+    def add_Problem(self, Type: str, Output: str, Verbose=2, OutputFormats=None):
         """
         Add ``Problem`` block to the Palace configuration.
         
@@ -69,6 +69,9 @@ class Config:
             Directory path where simulation results will be saved.
         Verbose : int, optional
             Verbosity level of the Palace log file (default is 2).
+        OutputFormats : dict, optional
+            Optional ``config["Problem"]["OutputFormats"]`` dictionary, e.g.
+            ``{"Paraview": True, "GridFunction": False}``.
         """
     
         self.tracker.append("Problem")
@@ -77,15 +80,18 @@ class Config:
         if self.Type == "Boundarymode":
             self.Type = "BoundaryMode"
             
-        valid_types = ["Eigenmode","Driven","Transient","Electrostatic","Magnetostatic"]
+        valid_types = ["Eigenmode","Driven","Transient","Electrostatic","Magnetostatic","BoundaryMode"]
         
         if self.Type not in valid_types:
-            raise ValueError('Invalid Type specified, valid options are "Eigenmode","Driven","Transient","Electrostatic","Magnetostatic"')
+            raise ValueError('Invalid Type specified, valid options are "Eigenmode","Driven","Transient","Electrostatic","Magnetostatic","BoundaryMode"')
             
 
         self.config["Problem"] = {"Type":Type,
                                "Verbose":Verbose,
                                "Output":Output}
+
+        if OutputFormats != None:
+            self.config["Problem"]["OutputFormats"] = OutputFormats
 
     def add_Model(self,Mesh:str,L0=1.0e-6,Lc=None,Refinement=None):
         """
@@ -119,7 +125,7 @@ class Config:
 
         self.config["Model"] = model_dict
 
-    def add_Domains(self,Materials,Postprocessing = []):
+    def add_Domains(self,Materials,Postprocessing = [],CurrentDipole = None):
         """
         Add ``Domains`` block to the Palace configuration.
 
@@ -131,6 +137,8 @@ class Config:
             List of material definitions generated using :func:`pypalace.builder.Domains.Material`.
         Postprocessing : list, optional
             List of Domains postprocessing definitions generated using :mod:`pypalace.builder.Domains` postprocessing functions.
+        CurrentDipole : list, optional
+            List of current dipole definitions generated using :func:`pypalace.builder.Domains.CurrentDipole`.
         """
     
         self.tracker.append("Domains")
@@ -142,6 +150,7 @@ class Config:
         Postprocessing_labels = ["Energy","Probe"]
         
         if len(Postprocessing) != 0:
+            postprocessing_dict = {}
             for lab in Postprocessing_labels:
 
                 mask = Postprocessing[:, 1] == lab
@@ -151,6 +160,9 @@ class Config:
                     postprocessing_dict[lab] = list(current)
 
                 domain_dict["Postprocessing"] = postprocessing_dict
+
+        if CurrentDipole != None:
+            domain_dict["CurrentDipole"] = list(CurrentDipole)
 
         self.config["Domains"] = domain_dict
         
@@ -179,7 +191,7 @@ class Config:
         Postprocessing = np.array(Postprocessing)
         
         BC_labels_scalartype = ["PEC","PMC","Absorbing","WavePortPEC","Ground","ZeroCharge","Periodic"]
-        BC_labels_arraytype = ["Impedance","Conductivity","LumpedPort","WavePort","SurfaceCurrent","Terminal"]
+        BC_labels_arraytype = ["Impedance","RationalImpedance","Conductivity","LumpedPort","WavePort","FloquetPort","FluxLoop","SurfaceCurrent","Terminal"]
 
         
         for lab in BC_labels_scalartype:
@@ -304,5 +316,3 @@ class Config:
         
         print(json.dumps(self.config, indent=2))
         
-
-
