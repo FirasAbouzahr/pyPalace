@@ -744,7 +744,9 @@ class Mesh:
 
         Auto-tags ``substrate``, ``air``, ``far_field``, and ``dielectric_gap``
         (CPW voids on the metal plane; not a Palace BC). Metal surfaces must
-        be listed in ``surface_map`` (no auto ground plane). The Quantum Metal
+        be listed in ``surface_map`` (no auto ground plane). Pure MeshWell
+        CAD: ``PolySurface`` metals nested by ``mesh_order`` plus a full-chip
+        gap surface attached to the substrate/air interface. The Quantum Metal
         mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
         mm design units with ``mesh_scale=1000``.
 

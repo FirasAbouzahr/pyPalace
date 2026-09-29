@@ -29,28 +29,28 @@ from shapely.ops import unary_union
 def _require_meshwell():
     try:
         import gdstk  # noqa: F401
-        from meshwell.cad_occ import cad_occ
-        from meshwell.model import ModelManager
+        from meshwell.orchestrator import generate_mesh
         from meshwell.polyprism import PolyPrism
+        from meshwell.polysurface import PolySurface
+        from meshwell.resolution import ConstantInField, ThresholdField
     except ImportError as e:
         raise ImportError(
             "GDS meshing requires 'meshwell' and 'gdstk'. "
             "Reinstall pypalace (or: pip install meshwell gdstk)."
         ) from e
-    return cad_occ, ModelManager, PolyPrism
+    return generate_mesh, PolyPrism, PolySurface, ConstantInField, ThresholdField
 
 
-def _gmsh_add_polygon_surface_xy(gmsh, polygon: Polygon, z: float, lc: float) -> int:
-    """Add a simple OCC plane surface from a Shapely polygon (line edges only)."""
-    from .meshing import Mesh
-
-    return Mesh._gmsh_add_polygon_surface(
-        gmsh,
-        polygon,
-        z=float(z),
-        lc=float(lc),
-        boundary_simplify=None,
-    )
+def _fill_holes(geom) -> Any:
+    """Return exterior-only polygons (MeshWell mesh_order carves interior voids)."""
+    parts: list[Polygon] = []
+    for p in _flatten_polygons(geom):
+        if p.is_empty or p.area <= 0:
+            continue
+        parts.append(Polygon(list(p.exterior.coords)))
+    if not parts:
+        return geom
+    return parts[0] if len(parts) == 1 else MultiPolygon(parts)
 
 
 def _flatten_polygons(geom) -> list[Polygon]:
@@ -623,11 +623,23 @@ def mesh_gds(
     ``L0 = 1e-6``). If the GDS is in mm, pass ``mesh_scale=1000`` and keep
     the µm kwargs, or scale the kwargs to mm and use ``mesh_scale=1``.
 
+    CAD is pure MeshWell: SurfaceMap metals and a full-chip
+    ``dielectric_gap`` are ``PolySurface`` entities nested by
+    ``mesh_order`` (small features win); substrate/air are ``PolyPrism``
+    volumes. MeshWell's sequential cut + fragment attaches coplanar
+    surfaces to the z=0 interface — do not pre-boolean the gap out of
+    the chip (that leaves large ground planes dangling).
+
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
     """
-    cad_occ, ModelManager, PolyPrism = _require_meshwell()
-    import gmsh
+    (
+        generate_mesh,
+        PolyPrism,
+        PolySurface,
+        ConstantInField,
+        ThresholdField,
+    ) = _require_meshwell()
 
     from .meshing import Mesh
 
@@ -662,11 +674,13 @@ def mesh_gds(
         farfield_attr = int(air_attr) + 1
     else:
         farfield_attr = int(farfield_attr)
+    gap_attr = int(farfield_attr) + 1
 
     reserved = {
         "substrate": substrate_attr,
         "air": air_attr,
         "far_field": farfield_attr,
+        "dielectric_gap": gap_attr,
     }
     for name, attr in smap.items():
         for rname, rattr in reserved.items():
@@ -719,7 +733,11 @@ def mesh_gds(
             "volume_mesh_size=250). If the GDS is in mm, pass mesh_scale=1000."
         )
 
-    # Build non-overlapping SurfaceMap geometries (small features win).
+    # SurfaceMap geometries: keep overlaps and fill GDS holes. MeshWell's
+    # mesh_order sequential cut (small → large) plus a full-chip
+    # dielectric_gap PolySurface is what attaches large ground planes to
+    # the substrate/air interface. Pre-differencing the gap leaves ground
+    # dangling as a free surface.
     name_geoms: dict[str, Any] = {}
     for name, entry in smap.items():
         selected = []
@@ -728,39 +746,25 @@ def mesh_gds(
         if not selected:
             raise ValueError(f"SurfaceMap[{name!r}] produced no geometry")
         geom = selected[0] if len(selected) == 1 else unary_union(selected)
-        name_geoms[name] = geom
-
-    all_union = unary_union(list(name_geoms.values()))
-    for name, geom in list(name_geoms.items()):
-        others = all_union.difference(geom) if all_union is not None else None
-        name_geoms[name] = _drop_covered_holes(geom, others)
+        cleaned_parts: list[Polygon] = []
+        for part in _flatten_polygons(_fill_holes(geom)):
+            cleaned_parts.extend(_clean_polygon(part, snap=snap))
+        if not cleaned_parts:
+            raise ValueError(
+                f"SurfaceMap[{name!r}] became empty after hole-fill/cleaning"
+            )
+        name_geoms[name] = (
+            cleaned_parts[0]
+            if len(cleaned_parts) == 1
+            else MultiPolygon(cleaned_parts)
+        )
 
     ordered_names = sorted(
         name_geoms.keys(),
         key=lambda n: (float(name_geoms[n].area), smap[n]["attr"], n),
     )
-
-    claimed = None
-    kept_geoms: dict[str, Any] = {}
-    for name in ordered_names:
-        geom = name_geoms[name]
-        if claimed is not None and not claimed.is_empty:
-            geom = geom.difference(claimed)
-        cleaned_parts: list[Polygon] = []
-        for part in _flatten_polygons(geom):
-            cleaned_parts.extend(_clean_polygon(part, snap=snap))
-        if not cleaned_parts:
-            print(
-                "USER WARNING: SurfaceMap[{!r}] was empty after overlap cleanup; "
-                "skipping.".format(name)
-            )
-            continue
-        geom = cleaned_parts[0] if len(cleaned_parts) == 1 else MultiPolygon(cleaned_parts)
-        kept_geoms[name] = geom
-        claimed = geom if claimed is None else unary_union([claimed, geom])
-
-    if not kept_geoms:
-        raise ValueError("No SurfaceMap surfaces remained after overlap cleanup")
+    if not ordered_names:
+        raise ValueError("No SurfaceMap surfaces to mesh")
 
     if fuzzy_value == None:
         fuzzy_value = float(snap)
@@ -769,21 +773,34 @@ def mesh_gds(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(
-        "meshing GDS: chip_span={:.4g}, h_vol={:.4g}, h_surf={:.4g}, "
+        "meshing GDS (MeshWell): chip_span={:.4g}, h_vol={:.4g}, h_surf={:.4g}, "
         "mesh_scale={:g} (mesh units)".format(
             chip_span, h_vol, h_surf, float(mesh_scale)
         )
     )
 
-    # ------------------------------------------------------------------
-    # Hybrid CAD:
-    #   1) MeshWell builds substrate/air volumes
-    #   2) Gmsh imprints SurfaceMap polygons onto z=0 so metals AND
-    #      dielectric gaps become conformal faces of the volume interface
-    #      (MeshWell PolySurface coplanar fragment leaves large ground
-    #      planes as dangling surfaces — that is what plot_mesh showed).
-    # ------------------------------------------------------------------
-    volume_entities = [
+    entities: list[Any] = []
+    for i, name in enumerate(ordered_names):
+        entities.append(
+            PolySurface(
+                polygons=name_geoms[name],
+                physical_name=name,
+                mesh_order=float(i + 1),
+                identify_arcs=identify_arcs,
+                point_tolerance=snap,
+            )
+        )
+    # Full chip at the highest surface order — MeshWell carves metals out.
+    entities.append(
+        PolySurface(
+            polygons=chip,
+            physical_name="dielectric_gap",
+            mesh_order=float(len(ordered_names) + 1),
+            identify_arcs=identify_arcs,
+            point_tolerance=snap,
+        )
+    )
+    entities.append(
         PolyPrism(
             polygons=chip,
             buffers={z_sub: 0.0, 0.0: 0.0},
@@ -791,7 +808,9 @@ def mesh_gds(
             mesh_order=100.0,
             identify_arcs=identify_arcs,
             point_tolerance=snap,
-        ),
+        )
+    )
+    entities.append(
         PolyPrism(
             polygons=chip,
             buffers={0.0: 0.0, z_air: 0.0},
@@ -799,188 +818,41 @@ def mesh_gds(
             mesh_order=100.0,
             identify_arcs=identify_arcs,
             point_tolerance=snap,
-        ),
+        )
+    )
+
+    resolution_specs: dict[str, list] = {}
+    for name in ordered_names:
+        size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
+        specs = [ConstantInField(apply_to="surfaces", resolution=size)]
+        if h_refine > 0 and size < h_vol:
+            specs.append(
+                ThresholdField(
+                    apply_to="curves",
+                    sizemin=size,
+                    sizemax=h_vol,
+                    distmin=0.0,
+                    distmax=h_refine,
+                )
+            )
+        resolution_specs[name] = specs
+    resolution_specs["dielectric_gap"] = [
+        ConstantInField(apply_to="surfaces", resolution=h_surf)
     ]
 
-    mm = None
     try:
-        occ_entities = cad_occ(
-            volume_entities,
-            n_threads=1,
+        generate_mesh(
+            entities,
+            dim=3,
+            output_mesh=output_path,
+            default_characteristic_length=h_vol,
             point_tolerance=snap,
             fuzzy_value=float(fuzzy_value),
             progress_bars=True,
+            n_threads=1,
+            resolution_specs=resolution_specs,
+            gmsh_version=4.1,
         )
-        mm = ModelManager(n_threads=1, point_tolerance=snap)
-        mm.ensure_initialized(str(mm.filename))
-        mm.load_occ_entities(occ_entities)
-
-        # Imprint metals AND dielectric gaps onto z=0. Metals alone leave the
-        # CPW gaps / chip-margin as holes in the volume interface (no face to
-        # mesh). Gap polygons are imprinted too but left untagged for Palace.
-        tool_surfs: list[tuple[int, int]] = []
-        tool_names: list[str | None] = []
-        for name, geom in kept_geoms.items():
-            size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
-            for part in _flatten_polygons(geom):
-                tag = _gmsh_add_polygon_surface_xy(gmsh, part, z=0.0, lc=size)
-                tool_surfs.append((2, int(tag)))
-                tool_names.append(name)
-
-        all_metal = unary_union(list(kept_geoms.values()))
-        gap_geom = chip.difference(all_metal) if all_metal is not None else chip
-        gap_parts: list[Polygon] = []
-        for part in _flatten_polygons(gap_geom):
-            gap_parts.extend(_clean_polygon(part, snap=snap))
-        for part in gap_parts:
-            tag = _gmsh_add_polygon_surface_xy(gmsh, part, z=0.0, lc=h_surf)
-            tool_surfs.append((2, int(tag)))
-            tool_names.append(None)  # dielectric gap — no Palace metal attr
-
-        if not tool_surfs:
-            raise ValueError("No metal surfaces were created for imprinting")
-
-        vols = gmsh.model.getEntities(3)
-        _out, out_map = gmsh.model.occ.fragment(vols, tool_surfs)
-        gmsh.model.occ.synchronize()
-
-        name_to_faces: dict[str, list[int]] = {n: [] for n in kept_geoms}
-        gap_faces: set[int] = set()
-        n_vols = len(vols)
-        for i, name in enumerate(tool_names):
-            for dim, tag in out_map[n_vols + i]:
-                if int(dim) != 2:
-                    continue
-                tag = int(tag)
-                if name == None:
-                    gap_faces.add(tag)
-                else:
-                    name_to_faces[name].append(tag)
-
-        metal_faces = {f for faces in name_to_faces.values() for f in faces}
-        z_tol = max(1e-6, 1e-9 * chip_span)
-
-        def _assign_palace_groups() -> None:
-            """(Re)write physical groups. Call again after meshing — Gmsh/MeshWell
-            can resurrect interface names like ``substrate___air`` during generate.
-            """
-            existing = list(gmsh.model.getPhysicalGroups())
-            if existing:
-                gmsh.model.removePhysicalGroups(existing)
-
-            sub_vols: list[int] = []
-            air_vols: list[int] = []
-            for dim, tag in gmsh.model.getEntities(3):
-                _, _, zc = gmsh.model.occ.getCenterOfMass(dim, tag)
-                (sub_vols if zc < 0 else air_vols).append(int(tag))
-            if not sub_vols or not air_vols:
-                raise RuntimeError(
-                    "Failed to identify substrate/air volumes after metal imprint"
-                )
-            gmsh.model.addPhysicalGroup(3, sub_vols, int(substrate_attr))
-            gmsh.model.setPhysicalName(3, int(substrate_attr), "substrate")
-            gmsh.model.addPhysicalGroup(3, air_vols, int(air_attr))
-            gmsh.model.setPhysicalName(3, int(air_attr), "air")
-
-            for name, faces in name_to_faces.items():
-                if not faces:
-                    raise ValueError(
-                        f"SurfaceMap[{name!r}] did not produce any imprinted z=0 "
-                        "face; check polygon ids / mesh_scale."
-                    )
-                attr = int(smap[name]["attr"])
-                gmsh.model.addPhysicalGroup(2, faces, attr)
-                gmsh.model.setPhysicalName(2, attr, name)
-
-            # far_field: outer box faces only (not metals, not dielectric gaps).
-            vol_boundary = set()
-            for dim, tag in gmsh.model.getEntities(3):
-                for bd, bt in gmsh.model.getBoundary(
-                    [(dim, tag)], combined=False, oriented=False, recursive=False
-                ):
-                    if bd == 2:
-                        vol_boundary.add(int(bt))
-            far_faces: list[int] = []
-            for tag in sorted(vol_boundary):
-                if tag in metal_faces or tag in gap_faces:
-                    continue
-                try:
-                    _xmin, _ymin, zmin, _xmax, _ymax, zmax = gmsh.model.getBoundingBox(
-                        2, tag
-                    )
-                except Exception:
-                    continue
-                # Skip any remaining z=0 interface scraps.
-                if abs(zmin) <= z_tol and abs(zmax) <= z_tol:
-                    continue
-                far_faces.append(tag)
-            if far_faces:
-                gmsh.model.addPhysicalGroup(2, far_faces, int(farfield_attr))
-                gmsh.model.setPhysicalName(2, int(farfield_attr), "far_field")
-
-            # Keep gap faces in the .msh (SaveAll=0 drops untagged entities).
-            # Not a Palace BC — leave out of Boundaries so gaps stay dielectric.
-            if gap_faces:
-                gap_attr = int(farfield_attr) + 1
-                gmsh.model.addPhysicalGroup(2, sorted(gap_faces), gap_attr)
-                gmsh.model.setPhysicalName(2, gap_attr, "dielectric_gap")
-
-        _assign_palace_groups()
-
-        # Mesh size: bulk + threshold refinement near metal boundaries.
-        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", min(h_surf, h_vol))
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", h_vol)
-        gmsh.option.setNumber("Mesh.ElementOrder", 1)
-        gmsh.option.setNumber("Mesh.Algorithm3D", 1)
-
-        mesh_fields: list[int] = []
-        for name, faces in name_to_faces.items():
-            size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
-            # Constant size on metal surfaces
-            const_f = gmsh.model.mesh.field.add("Constant")
-            gmsh.model.mesh.field.setNumber(const_f, "VIn", size)
-            gmsh.model.mesh.field.setNumber(const_f, "VOut", h_vol)
-            gmsh.model.mesh.field.setNumbers(const_f, "SurfacesList", faces)
-            mesh_fields.append(const_f)
-
-            if h_refine > 0 and size < h_vol:
-                # Curves bounding these faces
-                curves: list[int] = []
-                for ftag in faces:
-                    for cd, ct in gmsh.model.getBoundary(
-                        [(2, ftag)], combined=False, oriented=False, recursive=False
-                    ):
-                        if cd == 1:
-                            curves.append(int(ct))
-                if curves:
-                    dist_f = gmsh.model.mesh.field.add("Distance")
-                    gmsh.model.mesh.field.setNumbers(dist_f, "CurvesList", curves)
-                    gmsh.model.mesh.field.setNumber(dist_f, "Sampling", 100)
-                    thr_f = gmsh.model.mesh.field.add("Threshold")
-                    gmsh.model.mesh.field.setNumber(thr_f, "InField", dist_f)
-                    gmsh.model.mesh.field.setNumber(thr_f, "SizeMin", size)
-                    gmsh.model.mesh.field.setNumber(thr_f, "SizeMax", h_vol)
-                    gmsh.model.mesh.field.setNumber(thr_f, "DistMin", 0.0)
-                    gmsh.model.mesh.field.setNumber(thr_f, "DistMax", h_refine)
-                    mesh_fields.append(thr_f)
-
-        if len(mesh_fields) == 1:
-            gmsh.model.mesh.field.setAsBackgroundMesh(mesh_fields[0])
-        elif len(mesh_fields) > 1:
-            min_f = gmsh.model.mesh.field.add("Min")
-            gmsh.model.mesh.field.setNumbers(min_f, "FieldsList", mesh_fields)
-            gmsh.model.mesh.field.setAsBackgroundMesh(min_f)
-
-        gmsh.model.mesh.generate(3)
-        # Meshing can restore MeshWell interface group names; rewrite Palace tags.
-        _assign_palace_groups()
-        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
-        gmsh.option.setNumber("Mesh.Binary", 0)
-        gmsh.option.setNumber("Mesh.SaveAll", 0)
-        gmsh.write(str(output_path))
     except Exception as e:
         msg = str(e)
         raise RuntimeError(
@@ -989,51 +861,103 @@ def mesh_gds(
             "Common causes: invalid/overlapping GDS polygons or mesh_scale "
             "mismatch. Check SurfaceMap polygons via inspect_gds(...)."
         ) from e
-    finally:
-        if mm != None:
-            try:
-                mm.finalize()
-            except Exception:
-                pass
-        if gmsh.isInitialized():
-            gmsh.finalize()
 
-    # Gmsh MSH4 export can write volume $PhysicalNames tags as 1/2 even when
-    # entity physical tags are the Palace ids (13/14/...). Patch the names block
-    # so get_mesh_attributes / Palace config match the entity tags.
-    _fix_volume_physical_names(
+    _remap_palace_physical_groups(
         output_path,
+        surface_attrs={n: int(smap[n]["attr"]) for n in ordered_names},
         substrate_attr=int(substrate_attr),
         air_attr=int(air_attr),
+        farfield_attr=int(farfield_attr),
+        gap_attr=int(gap_attr),
+        chip_span=chip_span,
     )
 
     mesh_attributes = Mesh.get_mesh_attributes(str(output_path))
     return mesh_attributes.sort_values("ID")
 
 
-def _fix_volume_physical_names(
+def _remap_palace_physical_groups(
     mesh_path: Path,
+    surface_attrs: dict[str, int],
     substrate_attr: int,
     air_attr: int,
+    farfield_attr: int,
+    gap_attr: int,
+    chip_span: float,
 ) -> None:
-    """Align volume entries in ``$PhysicalNames`` with Palace attribute ids."""
-    import re
+    """Rewrite MeshWell physical tags to Palace attribute ids and drop helpers."""
+    import gmsh
 
-    text = Path(mesh_path).read_text()
-    begin = text.find("$PhysicalNames")
-    end = text.find("$EndPhysicalNames")
-    if begin < 0 or end < 0:
-        return
-    block = text[begin:end]
-    block2 = re.sub(
-        r'(?m)^3\s+\d+\s+"substrate"[ \t]*$',
-        f'3 {int(substrate_attr)} "substrate"',
-        block,
-    )
-    block2 = re.sub(
-        r'(?m)^3\s+\d+\s+"air"[ \t]*$',
-        f'3 {int(air_attr)} "air"',
-        block2,
-    )
-    if block2 != block:
-        Path(mesh_path).write_text(text[:begin] + block2 + text[end:])
+    z_tol = max(1e-6, 1e-9 * float(chip_span))
+    gmsh.initialize()
+    try:
+        gmsh.open(str(mesh_path))
+        by_name: dict[str, tuple[int, list[int]]] = {}
+        for dim, tag in gmsh.model.getPhysicalGroups():
+            name = gmsh.model.getPhysicalName(dim, tag)
+            ents = [int(x) for x in gmsh.model.getEntitiesForPhysicalGroup(dim, tag)]
+            by_name[name] = (int(dim), ents)
+
+        existing = list(gmsh.model.getPhysicalGroups())
+        if existing:
+            gmsh.model.removePhysicalGroups(existing)
+
+        def _add(dim: int, ents: list[int], attr: int, name: str) -> None:
+            if not ents:
+                return
+            gmsh.model.addPhysicalGroup(dim, sorted(set(ents)), int(attr))
+            gmsh.model.setPhysicalName(dim, int(attr), name)
+
+        if "substrate" not in by_name or "air" not in by_name:
+            raise RuntimeError(
+                "MeshWell mesh is missing substrate/air volume groups"
+            )
+        _add(3, by_name["substrate"][1], substrate_attr, "substrate")
+        _add(3, by_name["air"][1], air_attr, "air")
+
+        metal_faces: set[int] = set()
+        for name, attr in surface_attrs.items():
+            if name not in by_name:
+                raise ValueError(
+                    f"SurfaceMap[{name!r}] produced no MeshWell surface group; "
+                    "check polygon ids / mesh_scale."
+                )
+            dim, faces = by_name[name]
+            if dim != 2 or not faces:
+                raise ValueError(
+                    f"SurfaceMap[{name!r}] did not produce z=0 interface faces"
+                )
+            metal_faces.update(faces)
+            _add(2, faces, attr, name)
+
+        gap_faces: list[int] = []
+        if "dielectric_gap" in by_name and by_name["dielectric_gap"][0] == 2:
+            gap_faces = list(by_name["dielectric_gap"][1])
+            _add(2, gap_faces, gap_attr, "dielectric_gap")
+
+        # Exterior box faces from MeshWell boundary groups (…___None).
+        far_faces: list[int] = []
+        for name, (dim, ents) in by_name.items():
+            if dim != 2 or not name.endswith("___None"):
+                continue
+            for tag in ents:
+                if tag in metal_faces or tag in gap_faces:
+                    continue
+                try:
+                    _xmin, _ymin, zmin, _xmax, _ymax, zmax = gmsh.model.getBoundingBox(
+                        2, tag
+                    )
+                except Exception:
+                    continue
+                if abs(zmin) <= z_tol and abs(zmax) <= z_tol:
+                    continue
+                far_faces.append(tag)
+        _add(2, far_faces, farfield_attr, "far_field")
+
+        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+        gmsh.option.setNumber("Mesh.Binary", 0)
+        gmsh.option.setNumber("Mesh.SaveAll", 0)
+        gmsh.write(str(mesh_path))
+    finally:
+        if gmsh.isInitialized():
+            gmsh.finalize()
