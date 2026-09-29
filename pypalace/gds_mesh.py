@@ -637,8 +637,8 @@ def _remap_palace_physical_groups(
             gmsh.model.addPhysicalGroup(2, uniq, tag=int(farfield_attr))
             gmsh.model.setPhysicalName(2, int(farfield_attr), "far_field")
 
-        # Match Quantum Metal path / legacy plot_mesh ASCII reader: MSH 2.2
-        gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+        # Keep MeshWell/Gmsh native MSH 4.x (plot_mesh reads via Gmsh).
+        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
         gmsh.option.setNumber("Mesh.Binary", 0)
         gmsh.write(str(mesh_path))
     finally:
