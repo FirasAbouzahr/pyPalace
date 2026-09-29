@@ -69,7 +69,7 @@ def load_gds_polygons(
     import gdstk
     from shapely.geometry import Polygon as ShapelyPolygon
 
-    # Touch meshwell optional import early for a clear error message.
+    # Ensure meshwell/gdstk are importable early for a clear error message.
     _require_meshwell()
 
     library = gdstk.read_gds(str(gds_file))
