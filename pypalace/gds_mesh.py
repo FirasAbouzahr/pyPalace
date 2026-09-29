@@ -155,13 +155,17 @@ def _clean_polygon(poly: Polygon, snap: float | None = None) -> list[Polygon]:
     return cleaned
 
 
-def _drop_covered_holes(geom, others, cover_frac: float = 0.5) -> Any:
+def _drop_covered_holes(geom, others, cover_frac: float = 0.98) -> Any:
     """
     Drop holes that are already represented by other SurfaceMap metals.
 
     GDS ground planes often include cutouts that nearly match island polygons.
     Emitting both the hole wire and the island PolySurface creates coincident
     OpenCASCADE edges that frequently fail with ``Could not fix wire``.
+
+    Only near-duplicate cutouts are removed (default ``cover_frac=0.98``).
+    A lower threshold would also delete real CPW trenches that merely contain
+    islands, which then get filled and tagged as ground.
     """
     parts: list[Polygon] = []
     others_ok = others is not None and not getattr(others, "is_empty", True)
