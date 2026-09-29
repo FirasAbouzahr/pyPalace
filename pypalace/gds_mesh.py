@@ -866,7 +866,9 @@ def mesh_gds(
             progress_bars=True,
             n_threads=1,
             resolution_specs=resolution_specs,
-            gmsh_version=2.2,
+            # Intermediate MSH 4.1 keeps OCC entity adjacency so remap can
+            # call getBoundary; final write below is MSH 2.2 for Palace/MFEM.
+            gmsh_version=4.1,
         )
     except Exception as e:
         msg = str(e)
@@ -1064,8 +1066,8 @@ def _remap_palace_physical_groups(
                 far_faces.append(tag)
         _add(2, far_faces, farfield_attr, "far_field")
 
-        # Palace/MFEM's Gmsh reader does not support MSH 4.x; writing 4.1
-        # yields a misleading "vertices indices are not unique" abort.
+        # Final Palace/MFEM-facing file must be MSH 2.2. Intermediate MeshWell
+        # output stays 4.1 so entity adjacency survives gmsh.open for remap.
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
         gmsh.option.setNumber("Mesh.Binary", 0)
         gmsh.option.setNumber("Mesh.SaveAll", 0)
