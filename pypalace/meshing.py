@@ -711,16 +711,16 @@ class Mesh:
         *,
         metal_layer: tuple[int, int] = (1, 0),
         cell_name: str | None = None,
-        substrate_thickness: float = 0.5,
-        airbox_height: float = 0.5,
-        margin: float = 0.5,
+        substrate_thickness: float = 500.0,
+        airbox_height: float = 500.0,
+        margin: float = 500.0,
         margin_x: float | None = None,
         margin_y: float | None = None,
-        volume_mesh_size: float = 0.25,
-        surface_mesh_size: float = 0.02,
+        volume_mesh_size: float = 250.0,
+        surface_mesh_size: float = 20.0,
         custom_surface_mesh: dict[str, float] | None = None,
-        refinement_radius: float = 0.15,
-        mesh_scale: float = 1000.0,
+        refinement_radius: float = 150.0,
+        mesh_scale: float = 1.0,
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
@@ -732,7 +732,8 @@ class Mesh:
 
         Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces
         must be listed in ``surface_map`` (no auto ground plane). The Quantum
-        Metal mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged.
+        Metal mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still
+        uses mm design units with ``mesh_scale=1000``.
 
         Parameters
         ----------
@@ -749,16 +750,17 @@ class Mesh:
         cell_name : str, optional
             GDS cell to read; default is the top cell.
         substrate_thickness, airbox_height, margin, margin_x, margin_y:
-            Geometry lengths in the GDS units (before ``mesh_scale``).
+            Geometry lengths in **µm** (before ``mesh_scale``).
         volume_mesh_size, surface_mesh_size:
-            Default bulk / metal-surface mesh targets in GDS units.
+            Default bulk / metal-surface mesh targets in **µm**.
         custom_surface_mesh : dict, optional
-            Per-name surface size overrides (SurfaceMap names).
+            Per-name surface size overrides (SurfaceMap names), in **µm**.
         refinement_radius :
-            Distance over which surface sizing grows to ``volume_mesh_size``.
+            Distance over which surface sizing grows to ``volume_mesh_size``
+            (µm).
         mesh_scale :
-            Multiplies coordinates before meshing. Use ``1000`` when GDS is in
-            mm and Palace uses ``L0 = 1e-6``.
+            Multiplies coordinates before meshing. Default ``1`` for µm GDS
+            (Palace ``L0 = 1e-6``). Use ``1000`` only if the GDS is in mm.
         farfield_attr, substrate_attr, air_attr :
             Integer attributes or ``"auto"``.
         identify_arcs :

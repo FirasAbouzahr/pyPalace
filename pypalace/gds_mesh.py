@@ -8,6 +8,9 @@ This module implements the GDS path:
 3. :func:`mesh_gds` — MeshWell CAD/mesh with auto ``substrate``, ``air``,
    ``far_field`` tags (no auto ground plane)
 
+Default units are **micrometers (µm)** with ``mesh_scale=1`` (Palace
+``L0 = 1e-6``).
+
 Requires ``meshwell`` and ``gdstk`` (core package dependencies).
 """
 
@@ -647,16 +650,16 @@ def mesh_gds(
     *,
     metal_layer: tuple[int, int] = (1, 0),
     cell_name: str | None = None,
-    substrate_thickness: float = 0.5,
-    airbox_height: float = 0.5,
-    margin: float = 0.5,
+    substrate_thickness: float = 500.0,
+    airbox_height: float = 500.0,
+    margin: float = 500.0,
     margin_x: float | None = None,
     margin_y: float | None = None,
-    volume_mesh_size: float = 0.25,
-    surface_mesh_size: float = 0.02,
+    volume_mesh_size: float = 250.0,
+    surface_mesh_size: float = 20.0,
     custom_surface_mesh: dict[str, float] | None = None,
-    refinement_radius: float = 0.15,
-    mesh_scale: float = 1000.0,
+    refinement_radius: float = 150.0,
+    mesh_scale: float = 1.0,
     farfield_attr: int | str = "auto",
     substrate_attr: int | str = "auto",
     air_attr: int | str = "auto",
@@ -669,19 +672,13 @@ def mesh_gds(
     Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces come
     only from ``surface_map`` (no auto ground plane).
 
-    Parameters mirror :meth:`pypalace.meshing.Mesh.mesh_Quantum_Metal_design`
-    where applicable. Coordinates are multiplied by ``mesh_scale`` before
-    meshing (default ``1000`` for mm design units → µm mesh units with
-    Palace ``L0 = 1e-6``).
+    **Units are micrometers (µm)** by default: geometry kwargs and GDS
+    coordinates are treated as µm with ``mesh_scale=1`` (Palace
+    ``L0 = 1e-6``). If the GDS is in mm, pass ``mesh_scale=1000`` and keep
+    the µm kwargs, or scale the kwargs to mm and use ``mesh_scale=1``.
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
-
-    Size defaults (``volume_mesh_size=0.25``, ``surface_mesh_size=0.02``,
-    substrate/air ``0.5``) assume **mm** design units with ``mesh_scale=1000``.
-    For a µm GDS use ``mesh_scale=1`` and pass µm-sized kwargs (e.g.
-    ``volume_mesh_size=50``, ``surface_mesh_size=5``,
-    ``substrate_thickness=300``).
     """
     (
         generate_mesh,
@@ -735,8 +732,9 @@ def mesh_gds(
                     f"SurfaceMap[{name!r}] attr={rattr} collides with auto-tagged {rname!r}"
                 )
 
-    # Geometry in mesh units. Snap after scaling to kill micro-edges that break OCC wires.
-    snap = max(1e-9, 1e-6 * float(mesh_scale))
+    # Geometry in mesh units (µm by default). Snap ~1 nm to kill micro-edges
+    # that break OCC wires without collapsing real JJ-scale features.
+    snap = max(1e-3, 1e-6 * float(mesh_scale))
     scaled_polys: list[Any] = []
     for p in polys:
         cleaned = _clean_polygon(_scale_polygon(p, mesh_scale), snap=snap)
@@ -763,9 +761,8 @@ def mesh_gds(
     h_surf = float(surface_mesh_size) * mesh_scale
     h_refine = float(refinement_radius) * mesh_scale
 
-    # Defaults (volume=0.25, surface=0.02, thickness=0.5) assume mm design units
-    # with mesh_scale=1000. A µm GDS + mesh_scale=1 keeps those numbers as µm and
-    # can request billions of elements — fail fast instead of hanging after CAD.
+    # Guard against accidentally tiny sizes (e.g. old mm defaults like 0.02 on a
+    # µm GDS) which request billions of elements and hang after CAD.
     _minx, _miny, _maxx, _maxy = chip.bounds
     chip_span = max(_maxx - _minx, _maxy - _miny, 1e-30)
     est_surf_elems = (chip_span / max(h_surf, 1e-30)) ** 2
@@ -775,10 +772,8 @@ def mesh_gds(
             f"long time (chip span ≈ {chip_span:.4g} mesh units, "
             f"surface_mesh_size → {h_surf:.4g}, rough surface-element estimate "
             f"~{est_surf_elems:.1e}). "
-            "If your GDS is already in µm, use mesh_scale=1 with µm-sized kwargs, "
-            "e.g. volume_mesh_size=50, surface_mesh_size=5, substrate_thickness=300, "
-            "airbox_height=300, margin=50. "
-            "The defaults (0.25 / 0.02 / 0.5) are for mm designs with mesh_scale=1000."
+            "mesh_gds defaults are in µm (mesh_scale=1, surface_mesh_size=20, "
+            "volume_mesh_size=250). If the GDS is in mm, pass mesh_scale=1000."
         )
 
     entities: list[Any] = []
