@@ -759,7 +759,7 @@ class Mesh:
             come from :meth:`inspect_gds`. Reserved names: ``substrate``,
             ``air``, ``far_field``.
         output_mesh : str or Path
-            Output ``.msh`` path.
+            Output ``.msh`` path (Gmsh MSH 2.2 ASCII — required by Palace/MFEM).
         metal_layer : tuple of int
             GDS ``(layer, datatype)`` for circuit metal polygons.
         cell_name : str, optional

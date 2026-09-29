@@ -866,7 +866,7 @@ def mesh_gds(
             progress_bars=True,
             n_threads=1,
             resolution_specs=resolution_specs,
-            gmsh_version=4.1,
+            gmsh_version=2.2,
         )
     except Exception as e:
         msg = str(e)
@@ -1064,7 +1064,9 @@ def _remap_palace_physical_groups(
                 far_faces.append(tag)
         _add(2, far_faces, farfield_attr, "far_field")
 
-        gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
+        # Palace/MFEM's Gmsh reader does not support MSH 4.x; writing 4.1
+        # yields a misleading "vertices indices are not unique" abort.
+        gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
         gmsh.option.setNumber("Mesh.Binary", 0)
         gmsh.option.setNumber("Mesh.SaveAll", 0)
         gmsh.write(str(mesh_path))
