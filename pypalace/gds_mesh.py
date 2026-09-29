@@ -623,12 +623,11 @@ def mesh_gds(
     ``L0 = 1e-6``). If the GDS is in mm, pass ``mesh_scale=1000`` and keep
     the µm kwargs, or scale the kwargs to mm and use ``mesh_scale=1``.
 
-    CAD is pure MeshWell: SurfaceMap metals and a full-chip
-    ``dielectric_gap`` are ``PolySurface`` entities nested by
-    ``mesh_order`` (small features win); substrate/air are ``PolyPrism``
-    volumes. MeshWell's sequential cut + fragment attaches coplanar
-    surfaces to the z=0 interface — do not pre-boolean the gap out of
-    the chip (that leaves large ground planes dangling).
+    CAD is pure MeshWell: SurfaceMap metals (CPW holes kept) and a
+    full-chip ``dielectric_gap`` are ``PolySurface`` entities nested by
+    ``mesh_order``; substrate/air are ``PolyPrism`` volumes. Shared z=0
+    faces are then classified against the SurfaceMap footprints so large
+    ground planes and CPW trenches both land on the volume interface.
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
@@ -733,11 +732,10 @@ def mesh_gds(
             "volume_mesh_size=250). If the GDS is in mm, pass mesh_scale=1000."
         )
 
-    # SurfaceMap geometries: keep overlaps and fill GDS holes. MeshWell's
-    # mesh_order sequential cut (small → large) plus a full-chip
-    # dielectric_gap PolySurface is what attaches large ground planes to
-    # the substrate/air interface. Pre-differencing the gap leaves ground
-    # dangling as a free surface.
+    # Keep CPW holes in ground planes; only drop holes already covered by
+    # other SurfaceMap metals. Full-chip dielectric_gap (highest surface
+    # mesh_order) fragments z=0; Palace tags are assigned afterward by
+    # classifying shared interface faces against these footprints.
     name_geoms: dict[str, Any] = {}
     for name, entry in smap.items():
         selected = []
@@ -747,11 +745,25 @@ def mesh_gds(
             raise ValueError(f"SurfaceMap[{name!r}] produced no geometry")
         geom = selected[0] if len(selected) == 1 else unary_union(selected)
         cleaned_parts: list[Polygon] = []
-        for part in _flatten_polygons(_fill_holes(geom)):
+        for part in _flatten_polygons(geom):
+            cleaned_parts.extend(_clean_polygon(part, snap=snap))
+        if not cleaned_parts:
+            raise ValueError(f"SurfaceMap[{name!r}] became empty after cleaning")
+        name_geoms[name] = (
+            cleaned_parts[0]
+            if len(cleaned_parts) == 1
+            else MultiPolygon(cleaned_parts)
+        )
+
+    all_union = unary_union(list(name_geoms.values()))
+    for name, geom in list(name_geoms.items()):
+        others = all_union.difference(geom) if all_union is not None else None
+        cleaned_parts = []
+        for part in _flatten_polygons(_drop_covered_holes(geom, others)):
             cleaned_parts.extend(_clean_polygon(part, snap=snap))
         if not cleaned_parts:
             raise ValueError(
-                f"SurfaceMap[{name!r}] became empty after hole-fill/cleaning"
+                f"SurfaceMap[{name!r}] became empty after hole cleanup"
             )
         name_geoms[name] = (
             cleaned_parts[0]
@@ -765,7 +777,6 @@ def mesh_gds(
     )
     if not ordered_names:
         raise ValueError("No SurfaceMap surfaces to mesh")
-
     if fuzzy_value == None:
         fuzzy_value = float(snap)
 
@@ -865,6 +876,7 @@ def mesh_gds(
     _remap_palace_physical_groups(
         output_path,
         surface_attrs={n: int(smap[n]["attr"]) for n in ordered_names},
+        surface_geoms=name_geoms,
         substrate_attr=int(substrate_attr),
         air_attr=int(air_attr),
         farfield_attr=int(farfield_attr),
@@ -876,19 +888,66 @@ def mesh_gds(
     return mesh_attributes.sort_values("ID")
 
 
+def _classify_z0_face(
+    gmsh,
+    face_tag: int,
+    ordered_names: list[str],
+    surface_geoms: dict[str, Any],
+) -> str:
+    """Vote a shared z=0 face into a SurfaceMap name or ``dielectric_gap``."""
+    from shapely.geometry import Point
+
+    try:
+        _tags, coords, _p = gmsh.model.mesh.getNodes(
+            2, int(face_tag), includeBoundary=True
+        )
+    except Exception:
+        return "dielectric_gap"
+    if coords is None or len(coords) < 3:
+        return "dielectric_gap"
+    pts = np.asarray(coords, dtype=float).reshape(-1, 3)[:, :2]
+    if len(pts) > 250:
+        pts = pts[:: max(1, len(pts) // 250)]
+
+    votes = {name: 0 for name in ordered_names}
+    gap_votes = 0
+    for x, y in pts:
+        p = Point(float(x), float(y))
+        hit = None
+        for name in ordered_names:  # small features first
+            geom = surface_geoms[name]
+            if geom.covers(p) or geom.contains(p):
+                hit = name
+                break
+        if hit == None:
+            gap_votes += 1
+        else:
+            votes[hit] += 1
+
+    best_name = max(ordered_names, key=lambda n: votes[n])
+    if votes[best_name] > gap_votes and votes[best_name] > 0:
+        return best_name
+    return "dielectric_gap"
+
+
 def _remap_palace_physical_groups(
     mesh_path: Path,
     surface_attrs: dict[str, int],
+    surface_geoms: dict[str, Any],
     substrate_attr: int,
     air_attr: int,
     farfield_attr: int,
     gap_attr: int,
     chip_span: float,
 ) -> None:
-    """Rewrite MeshWell physical tags to Palace attribute ids and drop helpers."""
+    """Tag shared z=0 faces by SurfaceMap footprints; drop dangling helpers."""
     import gmsh
 
     z_tol = max(1e-6, 1e-9 * float(chip_span))
+    ordered_names = sorted(
+        surface_attrs.keys(),
+        key=lambda n: (float(surface_geoms[n].area), surface_attrs[n], n),
+    )
     gmsh.initialize()
     try:
         gmsh.open(str(mesh_path))
@@ -898,6 +957,71 @@ def _remap_palace_physical_groups(
             ents = [int(x) for x in gmsh.model.getEntitiesForPhysicalGroup(dim, tag)]
             by_name[name] = (int(dim), ents)
 
+        if "substrate" not in by_name or "air" not in by_name:
+            raise RuntimeError(
+                "MeshWell mesh is missing substrate/air volume groups"
+            )
+
+        sub_vols = by_name["substrate"][1]
+        air_vols = by_name["air"][1]
+
+        def _boundary_faces(vols: list[int]) -> set[int]:
+            faces: set[int] = set()
+            for v in vols:
+                for dim, tag in gmsh.model.getBoundary(
+                    [(3, int(v))], combined=False, oriented=False, recursive=False
+                ):
+                    if int(dim) == 2:
+                        faces.add(int(tag))
+            return faces
+
+        shared = _boundary_faces(sub_vols) & _boundary_faces(air_vols)
+        z0_shared: list[int] = []
+        for tag in shared:
+            try:
+                _xmin, _ymin, zmin, _xmax, _ymax, zmax = gmsh.model.getBoundingBox(
+                    2, tag
+                )
+            except Exception:
+                continue
+            if abs(zmin) <= z_tol and abs(zmax) <= z_tol:
+                z0_shared.append(tag)
+
+        # MeshWell name(s) for each face before we rewrite groups.
+        face_mw_names: dict[int, list[str]] = {}
+        for name, (dim, ents) in by_name.items():
+            if dim != 2:
+                continue
+            for tag in ents:
+                face_mw_names.setdefault(int(tag), []).append(name)
+
+        name_to_faces: dict[str, list[int]] = {n: [] for n in ordered_names}
+        gap_faces: list[int] = []
+        for tag in z0_shared:
+            mw_metal = [
+                n for n in face_mw_names.get(tag, []) if n in surface_attrs
+            ]
+            if len(mw_metal) == 1:
+                # Trust MeshWell when a SurfaceMap metal already owns the
+                # shared face (tiny JJs etc.).
+                label = mw_metal[0]
+            else:
+                # Large ground often dangles; its volume face is left as
+                # dielectric_gap / substrate___air — classify by footprint.
+                label = _classify_z0_face(
+                    gmsh, tag, ordered_names, surface_geoms
+                )
+            if label == "dielectric_gap":
+                gap_faces.append(tag)
+            else:
+                name_to_faces[label].append(tag)
+
+        for name in ordered_names:
+            if not name_to_faces[name]:
+                raise ValueError(
+                    f"SurfaceMap[{name!r}] has no shared z=0 interface face after "
+                    "classification; check polygon ids / mesh_scale."
+                )
         existing = list(gmsh.model.getPhysicalGroups())
         if existing:
             gmsh.model.removePhysicalGroups(existing)
@@ -908,32 +1032,14 @@ def _remap_palace_physical_groups(
             gmsh.model.addPhysicalGroup(dim, sorted(set(ents)), int(attr))
             gmsh.model.setPhysicalName(dim, int(attr), name)
 
-        if "substrate" not in by_name or "air" not in by_name:
-            raise RuntimeError(
-                "MeshWell mesh is missing substrate/air volume groups"
-            )
-        _add(3, by_name["substrate"][1], substrate_attr, "substrate")
-        _add(3, by_name["air"][1], air_attr, "air")
-
+        _add(3, sub_vols, substrate_attr, "substrate")
+        _add(3, air_vols, air_attr, "air")
         metal_faces: set[int] = set()
         for name, attr in surface_attrs.items():
-            if name not in by_name:
-                raise ValueError(
-                    f"SurfaceMap[{name!r}] produced no MeshWell surface group; "
-                    "check polygon ids / mesh_scale."
-                )
-            dim, faces = by_name[name]
-            if dim != 2 or not faces:
-                raise ValueError(
-                    f"SurfaceMap[{name!r}] did not produce z=0 interface faces"
-                )
+            faces = name_to_faces[name]
             metal_faces.update(faces)
             _add(2, faces, attr, name)
-
-        gap_faces: list[int] = []
-        if "dielectric_gap" in by_name and by_name["dielectric_gap"][0] == 2:
-            gap_faces = list(by_name["dielectric_gap"][1])
-            _add(2, gap_faces, gap_attr, "dielectric_gap")
+        _add(2, gap_faces, gap_attr, "dielectric_gap")
 
         # Exterior box faces from MeshWell boundary groups (…___None).
         far_faces: list[int] = []
