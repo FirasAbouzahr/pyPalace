@@ -280,7 +280,7 @@ def validate_surface_map(
     for name, entry in surface_map.items():
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"SurfaceMap keys must be non-empty strings, got {name!r}")
-        if name in ("substrate", "air", "far_field", "dielectric_gap"):
+        if name in ("substrate", "air", "air_below", "far_field", "dielectric_gap"):
             raise ValueError(
                 f"SurfaceMap name {name!r} is reserved for auto-tagged entities"
             )
@@ -601,6 +601,7 @@ def mesh_gds(
     cell_name: str | None = None,
     substrate_thickness: float = 500.0,
     airbox_height: float = 500.0,
+    airbox_height_below: float = 0.0,
     margin: float = 500.0,
     margin_x: float | None = None,
     margin_y: float | None = None,
@@ -633,6 +634,11 @@ def mesh_gds(
     faces are then classified against the SurfaceMap footprints so large
     ground planes and CPW trenches both land on the volume interface.
 
+    ``airbox_height`` is the vacuum above the metal plane (default 500 µm).
+    ``airbox_height_below`` adds optional vacuum under the substrate
+    (default **0** — same stack as before). When set, that volume shares the
+    Palace ``air`` attribute and far_field grows to the new bottom / sides.
+
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
     """
@@ -662,6 +668,12 @@ def mesh_gds(
         margin_y = margin
     if custom_surface_mesh == None:
         custom_surface_mesh = {}
+    if float(substrate_thickness) <= 0:
+        raise ValueError("substrate_thickness must be > 0")
+    if float(airbox_height) <= 0:
+        raise ValueError("airbox_height must be > 0")
+    if float(airbox_height_below) < 0:
+        raise ValueError("airbox_height_below must be >= 0 (0 keeps prior behavior)")
 
     # Auto volume / far_field attrs after user surface attrs
     max_user = max(v["attr"] for v in smap.values())
@@ -717,6 +729,7 @@ def mesh_gds(
 
     z_sub = -float(substrate_thickness) * mesh_scale
     z_air = float(airbox_height) * mesh_scale
+    z_air_below = z_sub - float(airbox_height_below) * mesh_scale
     h_vol = float(volume_mesh_size) * mesh_scale
     h_surf = float(surface_mesh_size) * mesh_scale
     h_refine = float(refinement_radius) * mesh_scale
@@ -835,6 +848,19 @@ def mesh_gds(
             point_tolerance=snap,
         )
     )
+    # Optional vacuum under the substrate (same Palace "air" attr after remap).
+    # Default airbox_height_below=0 skips this so existing stacks are unchanged.
+    if float(airbox_height_below) > 0:
+        entities.append(
+            PolyPrism(
+                polygons=chip,
+                buffers={z_air_below: 0.0, z_sub: 0.0},
+                physical_name="air_below",
+                mesh_order=100.0,
+                identify_arcs=identify_arcs,
+                point_tolerance=snap,
+            )
+        )
 
     resolution_specs: dict[str, list] = {}
     for name in ordered_names:
@@ -961,7 +987,15 @@ def _remap_palace_physical_groups(
         for dim, tag in gmsh.model.getPhysicalGroups():
             name = gmsh.model.getPhysicalName(dim, tag)
             ents = [int(x) for x in gmsh.model.getEntitiesForPhysicalGroup(dim, tag)]
-            by_name[name] = (int(dim), ents)
+            if name in by_name:
+                prev_dim, prev_ents = by_name[name]
+                if int(prev_dim) != int(dim):
+                    raise RuntimeError(
+                        f"Physical name {name!r} appears on multiple dimensions"
+                    )
+                by_name[name] = (int(dim), prev_ents + ents)
+            else:
+                by_name[name] = (int(dim), ents)
 
         if "substrate" not in by_name or "air" not in by_name:
             raise RuntimeError(
@@ -969,7 +1003,11 @@ def _remap_palace_physical_groups(
             )
 
         sub_vols = by_name["substrate"][1]
-        air_vols = by_name["air"][1]
+        # Optional under-substrate vacuum is meshed as air_below, then folded
+        # into the Palace "air" attribute (same material).
+        air_vols = list(by_name["air"][1])
+        if "air_below" in by_name and by_name["air_below"][0] == 3:
+            air_vols.extend(by_name["air_below"][1])
 
         def _boundary_faces(vols: list[int]) -> set[int]:
             faces: set[int] = set()
@@ -981,6 +1019,8 @@ def _remap_palace_physical_groups(
                         faces.add(int(tag))
             return faces
 
+        # Metal / gap tagging only on the metal plane (z=0). The substrate /
+        # air_below interface at z=-t_sub is intentionally left untagged.
         shared = _boundary_faces(sub_vols) & _boundary_faces(air_vols)
         z0_shared: list[int] = []
         for tag in shared:

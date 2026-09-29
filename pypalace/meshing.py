@@ -725,6 +725,7 @@ class Mesh:
         cell_name: str | None = None,
         substrate_thickness: float = 500.0,
         airbox_height: float = 500.0,
+        airbox_height_below: float = 0.0,
         margin: float = 500.0,
         margin_x: float | None = None,
         margin_y: float | None = None,
@@ -766,6 +767,11 @@ class Mesh:
             GDS cell to read; default is the top cell.
         substrate_thickness, airbox_height, margin, margin_x, margin_y:
             Geometry lengths in **µm** (before ``mesh_scale``).
+            ``airbox_height`` is vacuum above the metal plane (default 500).
+        airbox_height_below :
+            Optional vacuum under the substrate in **µm**. Default ``0``
+            (unchanged stack). When > 0, tagged as Palace ``air`` and
+            far_field expands to the new bottom / sides.
         volume_mesh_size, surface_mesh_size:
             Default bulk / metal-surface mesh targets in **µm**.
         custom_surface_mesh : dict, optional
@@ -795,6 +801,7 @@ class Mesh:
             cell_name=cell_name,
             substrate_thickness=substrate_thickness,
             airbox_height=airbox_height,
+            airbox_height_below=airbox_height_below,
             margin=margin,
             margin_x=margin_x,
             margin_y=margin_y,
