@@ -733,9 +733,6 @@ class Mesh:
         must be listed in ``surface_map`` (no auto ground plane). The Quantum
         Metal mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged.
 
-        Requires optional ``meshwell`` / ``gdstk``:
-        ``pip install 'pypalace[meshwell]'``.
-
         Parameters
         ----------
         gds_file : str or Path

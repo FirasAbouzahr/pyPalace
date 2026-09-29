@@ -32,9 +32,8 @@ def _require_meshwell():
         from meshwell.resolution import ConstantInField, ThresholdField
     except ImportError as e:
         raise ImportError(
-            "GDS meshing requires optional packages 'meshwell' and 'gdstk'. "
-            "Install with: pip install 'pypalace[meshwell]' "
-            "(or: pip install meshwell gdstk)"
+            "GDS meshing requires 'meshwell' and 'gdstk'. "
+            "Reinstall pypalace (or: pip install meshwell gdstk)."
         ) from e
     return generate_mesh, PolyPrism, PolySurface, ConstantInField, ThresholdField
 
