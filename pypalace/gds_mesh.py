@@ -296,19 +296,6 @@ def inspect_gds(
                 )
             )
 
-    if labeling:
-        for i, p in enumerate(polys):
-            c = p.centroid
-            ax.annotate(
-                f"p{i}",
-                (c.x, c.y),
-                fontsize=8,
-                ha="center",
-                va="center",
-                color="black",
-                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.7),
-            )
-
     full_xmin = float(df["xmin"].min())
     full_xmax = float(df["xmax"].max())
     full_ymin = float(df["ymin"].min())
@@ -331,18 +318,94 @@ def inspect_gds(
             xs.extend([minx, maxx])
             ys.extend([miny, maxy])
         pad = 0.05 * max(max(xs) - min(xs), max(ys) - min(ys), 1e-9)
-        ax.set_xlim(min(xs) - pad, max(xs) + pad)
-        ax.set_ylim(min(ys) - pad, max(ys) + pad)
+        xmin, xmax = min(xs) - pad, max(xs) + pad
+        ymin, ymax = min(ys) - pad, max(ys) + pad
     elif crop != None:
         center, span = crop
         cx, cy = center
-        ax.set_xlim(cx - span, cx + span)
-        ax.set_ylim(cy - span, cy + span)
+        xmin, xmax = cx - span, cx + span
+        ymin, ymax = cy - span, cy + span
     else:
         pad = 0.02 * max(full_xmax - full_xmin, full_ymax - full_ymin, 1e-9)
-        ax.set_xlim(full_xmin - pad, full_xmax + pad)
-        ax.set_ylim(full_ymin - pad, full_ymax + pad)
+        xmin, xmax = full_xmin - pad, full_xmax + pad
+        ymin, ymax = full_ymin - pad, full_ymax + pad
 
+    if labeling:
+        from shapely.geometry import Point as ShapelyPoint
+
+        # Color-matched top-right callouts so nested/centered polygons stay
+        # distinguishable (label color == surface color + arrow to attach point).
+        xspan = max(xmax - xmin, 1e-12)
+        yspan = max(ymax - ymin, 1e-12)
+        dx = 0.035 * xspan
+        dy = 0.035 * yspan
+        occupied: list[tuple[float, float]] = []
+        min_sep = 0.04 * max(xspan, yspan)
+
+        # Draw large → small so small-polygon callouts stay on top.
+        for i in sorted(range(len(polys)), key=lambda k: polys[k].area, reverse=True):
+            p = polys[i]
+            color = colors[i % len(colors)]
+            minx_p, miny_p, maxx_p, maxy_p = p.bounds
+            anchor_x, anchor_y = float(maxx_p), float(maxy_p)
+            # If the bbox corner is outside the polygon, snap to nearest boundary.
+            if not p.intersects(ShapelyPoint(anchor_x, anchor_y)):
+                nearest = p.exterior.interpolate(
+                    p.exterior.project(ShapelyPoint(anchor_x, anchor_y))
+                )
+                anchor_x, anchor_y = float(nearest.x), float(nearest.y)
+
+            text_x = anchor_x + dx
+            text_y = anchor_y + dy
+            for _ in range(12):
+                conflict = False
+                for ox, oy in occupied:
+                    if (text_x - ox) ** 2 + (text_y - oy) ** 2 < min_sep**2:
+                        text_y += 0.6 * min_sep
+                        conflict = True
+                        break
+                if not conflict:
+                    break
+            occupied.append((text_x, text_y))
+
+            ax.annotate(
+                f"p{i}",
+                xy=(anchor_x, anchor_y),
+                xytext=(text_x, text_y),
+                fontsize=8,
+                fontweight="bold",
+                ha="left",
+                va="bottom",
+                color=color,
+                clip_on=False,
+                arrowprops=dict(
+                    arrowstyle="->",
+                    color=color,
+                    lw=1.0,
+                    shrinkA=2,
+                    shrinkB=2,
+                ),
+                bbox=dict(
+                    boxstyle="round,pad=0.18",
+                    facecolor="white",
+                    edgecolor=color,
+                    linewidth=1.2,
+                    alpha=0.92,
+                ),
+            )
+            ax.plot(
+                [anchor_x],
+                [anchor_y],
+                marker="o",
+                markersize=3.5,
+                color=color,
+                markeredgecolor="k",
+                markeredgewidth=0.4,
+                zorder=5,
+            )
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
     ax.set_aspect("equal")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
