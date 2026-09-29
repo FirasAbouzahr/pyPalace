@@ -8,7 +8,7 @@ This module implements the GDS path:
 3. :func:`mesh_gds` — MeshWell CAD/mesh with auto ``substrate``, ``air``,
    ``far_field`` tags (no auto ground plane)
 
-Requires optional dependencies: ``meshwell``, ``gdstk``.
+Requires ``meshwell`` and ``gdstk`` (core package dependencies).
 """
 
 from __future__ import annotations

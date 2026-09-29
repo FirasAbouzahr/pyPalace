@@ -665,8 +665,7 @@ class Mesh:
         Plot GDS polygons with stable ids and return a summary DataFrame.
 
         Use ``poly_id`` values from the returned table when building a
-        SurfaceMap for :meth:`mesh_gds`. Requires optional ``meshwell`` /
-        ``gdstk`` (``pip install 'pypalace[meshwell]'``).
+        SurfaceMap for :meth:`mesh_gds`.
         """
         from .gds_mesh import inspect_gds
 
