@@ -85,9 +85,11 @@ def _clean_polygon(poly: Polygon, snap: float | None = None) -> list[Polygon]:
     - make_valid / buffer(0)
     - remove duplicate consecutive vertices
     - optional grid snap via shapely.set_precision
+    - enforce exterior CCW / hole CW orientation
     """
     import shapely
     from shapely import make_valid
+    from shapely.geometry.polygon import orient
 
     if poly is None or poly.is_empty:
         return []
@@ -128,9 +130,44 @@ def _clean_polygon(poly: Polygon, snap: float | None = None) -> list[Polygon]:
             except Exception:
                 pass
         for r in _flatten_polygons(q):
-            if not r.is_empty and r.area > 0:
-                cleaned.append(r)
+            if r.is_empty or r.area <= 0:
+                continue
+            try:
+                r = orient(r, sign=1.0)
+            except Exception:
+                pass
+            cleaned.append(r)
     return cleaned
+
+
+def _drop_covered_holes(geom, others, cover_frac: float = 0.5) -> Any:
+    """
+    Drop holes that are already represented by other SurfaceMap metals.
+
+    GDS ground planes often include cutouts that nearly match island polygons.
+    Emitting both the hole wire and the island PolySurface creates coincident
+    OpenCASCADE edges that frequently fail with ``Could not fix wire``.
+    """
+    parts: list[Polygon] = []
+    others_ok = others is not None and not getattr(others, "is_empty", True)
+    for p in _flatten_polygons(geom):
+        if not p.interiors or not others_ok:
+            parts.append(p)
+            continue
+        keep_holes = []
+        for interior in p.interiors:
+            hole = Polygon(interior)
+            if hole.is_empty or hole.area <= 0:
+                continue
+            covered = hole.intersection(others)
+            covered_area = float(getattr(covered, "area", 0.0) or 0.0)
+            if covered_area >= cover_frac * float(hole.area):
+                continue
+            keep_holes.append(interior)
+        parts.append(Polygon(list(p.exterior.coords), keep_holes))
+    if not parts:
+        return geom
+    return parts[0] if len(parts) == 1 else MultiPolygon(parts)
 
 
 def load_gds_polygons(
@@ -623,7 +660,8 @@ def mesh_gds(
     farfield_attr: int | str = "auto",
     substrate_attr: int | str = "auto",
     air_attr: int | str = "auto",
-    identify_arcs: bool = True,
+    identify_arcs: bool = False,
+    fuzzy_value: float | None = None,
 ) -> pd.DataFrame:
     """
     Mesh a GDS layout with MeshWell for Palace.
@@ -635,6 +673,9 @@ def mesh_gds(
     where applicable. Coordinates are multiplied by ``mesh_scale`` before
     meshing (default ``1000`` for mm design units → µm mesh units with
     Palace ``L0 = 1e-6``).
+
+    ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
+    it on filleted GDS paths often triggers OpenCASCADE wire failures.
     """
     (
         generate_mesh,
@@ -732,6 +773,13 @@ def mesh_gds(
         geom = selected[0] if len(selected) == 1 else unary_union(selected)
         name_geoms[name] = geom
 
+    # Drop ground-plane cutouts that are already covered by other tagged metals
+    # before the priority-difference pass (avoids double nearly-coincident wires).
+    all_union = unary_union(list(name_geoms.values()))
+    for name, geom in list(name_geoms.items()):
+        others = all_union.difference(geom) if all_union is not None else None
+        name_geoms[name] = _drop_covered_holes(geom, others)
+
     ordered_names = sorted(
         name_geoms.keys(),
         key=lambda n: (float(name_geoms[n].area), smap[n]["attr"], n),
@@ -819,6 +867,9 @@ def mesh_gds(
     output_path = Path(output_mesh)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if fuzzy_value == None:
+        fuzzy_value = float(snap)
+
     try:
         generate_mesh(
             entities=entities,
@@ -828,16 +879,17 @@ def mesh_gds(
             resolution_specs=resolution_specs,
             n_threads=1,
             point_tolerance=snap,
+            fuzzy_value=float(fuzzy_value),
         )
     except Exception as e:
         msg = str(e)
         raise RuntimeError(
             "MeshWell/OpenCASCADE failed while building the GDS mesh "
             f"({type(e).__name__}: {msg}). "
-            "This is often caused by invalid or overlapping GDS polygons "
-            "(self-intersections, tiny edges, duplicate vertices). "
-            "Try inspect_gds(...), confirm mesh_scale matches your GDS units, "
-            "and ensure SurfaceMap polygons are valid."
+            "Common causes: filleted GDS paths with identify_arcs=True, "
+            "overlapping/invalid polygons, or mesh_scale mismatch. "
+            "Retry with identify_arcs=False (default), confirm mesh_scale, "
+            "and check SurfaceMap polygons via inspect_gds(...)."
         ) from e
 
     _remap_palace_physical_groups(

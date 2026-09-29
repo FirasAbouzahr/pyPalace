@@ -724,7 +724,8 @@ class Mesh:
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
-        identify_arcs: bool = True,
+        identify_arcs: bool = False,
+        fuzzy_value: float | None = None,
     ):
         """
         Mesh a GDS layout with MeshWell for Palace.
@@ -761,7 +762,11 @@ class Mesh:
         farfield_attr, substrate_attr, air_attr :
             Integer attributes or ``"auto"``.
         identify_arcs :
-            Forwarded to MeshWell entities (circle/arc recovery).
+            MeshWell circle/arc recovery. Default ``False`` — enabling this on
+            filleted GDS paths often causes OpenCASCADE wire failures.
+        fuzzy_value :
+            OCC boolean fuzzy tolerance (mesh units). Default matches the
+            internal polygon snap tolerance.
         """
         from .gds_mesh import mesh_gds
 
@@ -785,6 +790,7 @@ class Mesh:
             substrate_attr=substrate_attr,
             air_attr=air_attr,
             identify_arcs=identify_arcs,
+            fuzzy_value=fuzzy_value,
         )
 
     @staticmethod
