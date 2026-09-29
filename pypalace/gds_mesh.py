@@ -676,6 +676,12 @@ def mesh_gds(
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
+
+    Size defaults (``volume_mesh_size=0.25``, ``surface_mesh_size=0.02``,
+    substrate/air ``0.5``) assume **mm** design units with ``mesh_scale=1000``.
+    For a µm GDS use ``mesh_scale=1`` and pass µm-sized kwargs (e.g.
+    ``volume_mesh_size=50``, ``surface_mesh_size=5``,
+    ``substrate_thickness=300``).
     """
     (
         generate_mesh,
@@ -756,6 +762,24 @@ def mesh_gds(
     h_vol = float(volume_mesh_size) * mesh_scale
     h_surf = float(surface_mesh_size) * mesh_scale
     h_refine = float(refinement_radius) * mesh_scale
+
+    # Defaults (volume=0.25, surface=0.02, thickness=0.5) assume mm design units
+    # with mesh_scale=1000. A µm GDS + mesh_scale=1 keeps those numbers as µm and
+    # can request billions of elements — fail fast instead of hanging after CAD.
+    _minx, _miny, _maxx, _maxy = chip.bounds
+    chip_span = max(_maxx - _minx, _maxy - _miny, 1e-30)
+    est_surf_elems = (chip_span / max(h_surf, 1e-30)) ** 2
+    if est_surf_elems > 5.0e7:
+        raise ValueError(
+            "Mesh size is far too fine for this layout and would hang for a very "
+            f"long time (chip span ≈ {chip_span:.4g} mesh units, "
+            f"surface_mesh_size → {h_surf:.4g}, rough surface-element estimate "
+            f"~{est_surf_elems:.1e}). "
+            "If your GDS is already in µm, use mesh_scale=1 with µm-sized kwargs, "
+            "e.g. volume_mesh_size=50, surface_mesh_size=5, substrate_thickness=300, "
+            "airbox_height=300, margin=50. "
+            "The defaults (0.25 / 0.02 / 0.5) are for mm designs with mesh_scale=1000."
+        )
 
     entities: list[Any] = []
     resolution_specs: dict[str, list] = {}
@@ -870,6 +894,13 @@ def mesh_gds(
     if fuzzy_value == None:
         fuzzy_value = float(snap)
 
+    print(
+        "meshing GDS: chip_span={:.4g}, h_vol={:.4g}, h_surf={:.4g}, "
+        "mesh_scale={:g} (mesh units)".format(
+            chip_span, h_vol, h_surf, float(mesh_scale)
+        )
+    )
+
     try:
         generate_mesh(
             entities=entities,
@@ -880,6 +911,7 @@ def mesh_gds(
             n_threads=1,
             point_tolerance=snap,
             fuzzy_value=float(fuzzy_value),
+            progress_bars=True,
         )
     except Exception as e:
         msg = str(e)
