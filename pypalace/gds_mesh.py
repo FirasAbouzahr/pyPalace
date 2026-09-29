@@ -54,6 +54,85 @@ def _flatten_polygons(geom) -> list[Polygon]:
     return []
 
 
+def _dedupe_ring(coords, tol: float) -> list[tuple[float, float]]:
+    """Drop consecutive near-duplicate vertices; keep a closed ring if possible."""
+    if not coords:
+        return []
+    pts = [(float(x), float(y)) for x, y in coords]
+    # Drop closing duplicate for processing
+    if len(pts) >= 2 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    cleaned: list[tuple[float, float]] = []
+    for x, y in pts:
+        if not cleaned:
+            cleaned.append((x, y))
+            continue
+        if abs(x - cleaned[-1][0]) <= tol and abs(y - cleaned[-1][1]) <= tol:
+            continue
+        cleaned.append((x, y))
+    if len(cleaned) >= 3:
+        if abs(cleaned[0][0] - cleaned[-1][0]) > tol or abs(cleaned[0][1] - cleaned[-1][1]) > tol:
+            cleaned.append(cleaned[0])
+        elif cleaned[0] != cleaned[-1]:
+            cleaned.append(cleaned[0])
+    return cleaned
+
+
+def _clean_polygon(poly: Polygon, snap: float | None = None) -> list[Polygon]:
+    """
+    Repair GDS polygons that commonly break OpenCASCADE wires.
+
+    - make_valid / buffer(0)
+    - remove duplicate consecutive vertices
+    - optional grid snap via shapely.set_precision
+    """
+    import shapely
+    from shapely import make_valid
+
+    if poly is None or poly.is_empty:
+        return []
+
+    geom = poly
+    if not geom.is_valid:
+        try:
+            geom = make_valid(geom)
+        except Exception:
+            geom = geom.buffer(0)
+
+    cleaned: list[Polygon] = []
+    for p in _flatten_polygons(geom):
+        if p.is_empty or p.area <= 0:
+            continue
+        # Local tolerance from polygon size if snap not provided
+        minx, miny, maxx, maxy = p.bounds
+        span = max(maxx - minx, maxy - miny, 1e-12)
+        tol = float(snap) if snap != None else max(1e-12, 1e-9 * span)
+
+        ext = _dedupe_ring(list(p.exterior.coords), tol)
+        if len(ext) < 4:
+            continue
+        holes = []
+        for interior in p.interiors:
+            hole = _dedupe_ring(list(interior.coords), tol)
+            if len(hole) >= 4:
+                holes.append(hole)
+        try:
+            q = Polygon(ext, holes)
+        except Exception:
+            continue
+        if not q.is_valid:
+            q = q.buffer(0)
+        if snap != None and snap > 0:
+            try:
+                q = shapely.set_precision(q, grid_size=float(snap), mode="pointwise")
+            except Exception:
+                pass
+        for r in _flatten_polygons(q):
+            if not r.is_empty and r.area > 0:
+                cleaned.append(r)
+    return cleaned
+
+
 def load_gds_polygons(
     gds_file: str | Path,
     layer: tuple[int, int] = (1, 0),
@@ -85,16 +164,33 @@ def load_gds_polygons(
 
     layer_num, datatype = tuple(layer)
     polys: list[Polygon] = []
+
+    def _consume_points(points) -> None:
+        pts = [(float(x), float(y)) for x, y in points]
+        if len(pts) < 3:
+            return
+        poly = ShapelyPolygon(pts)
+        polys.extend(_clean_polygon(poly))
+
     for polygon in cell.polygons:
         if polygon.layer != layer_num or polygon.datatype != datatype:
             continue
-        points = [(float(x), float(y)) for x, y in polygon.points]
-        if len(points) < 3:
+        _consume_points(polygon.points)
+
+    # Paths on the same layer (common in some GDS exports)
+    for path in getattr(cell, "paths", []):
+        try:
+            path_layer = path.layers[0] if hasattr(path, "layers") else path.layer
+            path_dtype = path.datatypes[0] if hasattr(path, "datatypes") else path.datatype
+        except Exception:
             continue
-        poly = ShapelyPolygon(points)
-        if not poly.is_valid:
-            poly = poly.buffer(0)
-        polys.extend(_flatten_polygons(poly))
+        if path_layer != layer_num or path_dtype != datatype:
+            continue
+        try:
+            for poly in path.to_polygons():
+                _consume_points(poly.points)
+        except Exception:
+            continue
 
     def sort_key(p: Polygon):
         c = p.centroid
@@ -592,11 +688,28 @@ def mesh_gds(
                     f"SurfaceMap[{name!r}] attr={rattr} collides with auto-tagged {rname!r}"
                 )
 
-    # Geometry in mesh units
-    scaled_polys = [_scale_polygon(p, mesh_scale) for p in polys]
-    chip = _scale_polygon(
-        _chip_bbox(polys, float(margin_x), float(margin_y)), mesh_scale
+    # Geometry in mesh units. Snap after scaling to kill micro-edges that break OCC wires.
+    snap = max(1e-9, 1e-6 * float(mesh_scale))
+    scaled_polys: list[Any] = []
+    for p in polys:
+        cleaned = _clean_polygon(_scale_polygon(p, mesh_scale), snap=snap)
+        if not cleaned:
+            raise ValueError(
+                "A SurfaceMap polygon became empty after cleaning/scaling; "
+                "check GDS units and mesh_scale."
+            )
+        scaled_polys.append(
+            cleaned[0] if len(cleaned) == 1 else unary_union(cleaned)
+        )
+
+    chip_parts = _clean_polygon(
+        _scale_polygon(_chip_bbox(polys, float(margin_x), float(margin_y)), mesh_scale),
+        snap=snap,
     )
+    if not chip_parts:
+        raise ValueError("Failed to build chip bounding box polygon")
+    chip = chip_parts[0]
+
     z_sub = -float(substrate_thickness) * mesh_scale
     z_air = float(airbox_height) * mesh_scale
     h_vol = float(volume_mesh_size) * mesh_scale
@@ -606,23 +719,64 @@ def mesh_gds(
     entities: list[Any] = []
     resolution_specs: dict[str, list] = {}
 
-    # Metal surfaces: lower mesh_order wins overlaps; tag JJ-like small attrs first
-    ordered_names = sorted(smap.keys(), key=lambda n: (smap[n]["attr"], n))
+    # Build per-name geometries. Smaller features get lower mesh_order (win overlaps).
+    # Also subtract higher-priority footprints so coplanar overlaps don't create
+    # broken OpenCASCADE wires ("Could not fix wire in surface ...").
+    name_geoms: dict[str, Any] = {}
+    for name, entry in smap.items():
+        selected = []
+        for idx in entry["polygons"]:
+            selected.extend(_flatten_polygons(scaled_polys[idx]))
+        if not selected:
+            raise ValueError(f"SurfaceMap[{name!r}] produced no geometry")
+        geom = selected[0] if len(selected) == 1 else unary_union(selected)
+        name_geoms[name] = geom
+
+    ordered_names = sorted(
+        name_geoms.keys(),
+        key=lambda n: (float(name_geoms[n].area), smap[n]["attr"], n),
+    )
+
+    claimed = None  # union of higher-priority (already emitted) surfaces
+    kept_names: list[str] = []
     for order, name in enumerate(ordered_names):
-        entry = smap[name]
-        selected = [scaled_polys[i] for i in entry["polygons"]]
-        if len(selected) == 1:
-            geom = selected[0]
-        else:
-            geom = MultiPolygon(selected)
+        geom = name_geoms[name]
+        if claimed is not None and not claimed.is_empty:
+            geom = geom.difference(claimed)
+        geom_parts = _flatten_polygons(geom)
+        if not geom_parts:
+            print(
+                "USER WARNING: SurfaceMap[{!r}] was fully covered by higher-priority "
+                "surfaces after overlap removal; it will not appear in the mesh.".format(
+                    name
+                )
+            )
+            continue
+        geom = geom_parts[0] if len(geom_parts) == 1 else MultiPolygon(geom_parts)
+        # Clean again after boolean difference
+        cleaned_parts: list[Polygon] = []
+        for part in _flatten_polygons(geom):
+            cleaned_parts.extend(_clean_polygon(part, snap=snap))
+        if not cleaned_parts:
+            print(
+                "USER WARNING: SurfaceMap[{!r}] became empty after OCC cleanup; "
+                "skipping.".format(name)
+            )
+            continue
+        geom = cleaned_parts[0] if len(cleaned_parts) == 1 else MultiPolygon(cleaned_parts)
+
         entities.append(
             PolySurface(
                 polygons=geom,
                 physical_name=name,
                 mesh_order=float(order),
                 identify_arcs=identify_arcs,
+                point_tolerance=snap,
             )
         )
+        kept_names.append(name)
+        claimed = geom if claimed is None else unary_union([claimed, geom])
+
         size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
         specs = [ConstantInField(resolution=size, apply_to="surfaces")]
         if h_refine > 0 and size < h_vol:
@@ -637,6 +791,9 @@ def mesh_gds(
             )
         resolution_specs[name] = specs
 
+    if not kept_names:
+        raise ValueError("No SurfaceMap surfaces remained after overlap cleanup")
+
     # Volumes (higher mesh_order so surfaces win the metal plane)
     entities.append(
         PolyPrism(
@@ -645,6 +802,7 @@ def mesh_gds(
             physical_name="substrate",
             mesh_order=100.0,
             identify_arcs=identify_arcs,
+            point_tolerance=snap,
         )
     )
     entities.append(
@@ -654,24 +812,37 @@ def mesh_gds(
             physical_name="air",
             mesh_order=100.0,
             identify_arcs=identify_arcs,
+            point_tolerance=snap,
         )
     )
 
     output_path = Path(output_mesh)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    generate_mesh(
-        entities=entities,
-        dim=3,
-        output_mesh=str(output_path),
-        default_characteristic_length=h_vol,
-        resolution_specs=resolution_specs,
-        n_threads=1,
-    )
+    try:
+        generate_mesh(
+            entities=entities,
+            dim=3,
+            output_mesh=str(output_path),
+            default_characteristic_length=h_vol,
+            resolution_specs=resolution_specs,
+            n_threads=1,
+            point_tolerance=snap,
+        )
+    except Exception as e:
+        msg = str(e)
+        raise RuntimeError(
+            "MeshWell/OpenCASCADE failed while building the GDS mesh "
+            f"({type(e).__name__}: {msg}). "
+            "This is often caused by invalid or overlapping GDS polygons "
+            "(self-intersections, tiny edges, duplicate vertices). "
+            "Try inspect_gds(...), confirm mesh_scale matches your GDS units, "
+            "and ensure SurfaceMap polygons are valid."
+        ) from e
 
     _remap_palace_physical_groups(
         output_path,
-        {name: entry["attr"] for name, entry in smap.items()},
+        {name: smap[name]["attr"] for name in kept_names},
         substrate_attr=int(substrate_attr),
         air_attr=int(air_attr),
         farfield_attr=int(farfield_attr),
