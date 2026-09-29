@@ -164,62 +164,74 @@ class Mesh:
 
     @staticmethod
     def _read_msh_for_plot(filename: str | Path):
+        """
+        Load triangle/tet connectivity for plotting.
+
+        Uses Gmsh so both MSH 2.2 (Quantum Metal path) and MSH 4.x
+        (MeshWell default) are supported.
+        """
+        import gmsh
+
         nodes: dict[int, tuple[float, float, float]] = {}
         tris: list[tuple[int, tuple[int, int, int]]] = []
         tets: list[tuple[int, tuple[int, int, int, int]]] = []
 
-        section = None
-        n_expected = 0
-        n_read = 0
+        # MSH element type → nodes per element (linear only for plot cuts)
+        nodes_per_type = {
+            2: 3,   # 3-node triangle
+            4: 4,   # 4-node tet
+            9: 6,   # 6-node second-order triangle (take first 3 corners)
+            11: 10, # 10-node second-order tet (take first 4 corners)
+        }
 
-        with open(filename, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith("$"):
-                    if line == "$Nodes":
-                        section = "nodes"
-                        n_read = 0
-                        n_expected = 0
-                    elif line == "$Elements":
-                        section = "elements"
-                        n_read = 0
-                        n_expected = 0
-                    elif line.startswith("$End"):
-                        section = None
-                    continue
+        owns_gmsh = not gmsh.isInitialized()
+        if owns_gmsh:
+            gmsh.initialize()
+        try:
+            gmsh.open(str(filename))
 
-                if section == "nodes":
-                    if n_expected == 0:
-                        n_expected = int(line)
+            node_tags, coords, _ = gmsh.model.mesh.getNodes()
+            for i, tag in enumerate(node_tags):
+                nodes[int(tag)] = (
+                    float(coords[3 * i]),
+                    float(coords[3 * i + 1]),
+                    float(coords[3 * i + 2]),
+                )
+
+            for dim in (2, 3):
+                for _, etag in gmsh.model.getEntities(dim):
+                    phys_tags = list(
+                        gmsh.model.getPhysicalGroupsForEntity(dim, int(etag))
+                    )
+                    if len(phys_tags) == 0:
                         continue
-                    parts = line.split()
-                    nid = int(parts[0])
-                    nodes[nid] = (float(parts[1]), float(parts[2]), float(parts[3]))
-                    n_read += 1
-                    if n_read >= n_expected:
-                        section = None
-
-                elif section == "elements":
-                    if n_expected == 0:
-                        n_expected = int(line)
-                        continue
-                    parts = line.split()
-                    elm_type = int(parts[1])
-                    num_tags = int(parts[2])
-                    phys = int(parts[3])
-                    node_start = 3 + num_tags
-                    node_ids = tuple(int(x) for x in parts[node_start:])
-
-                    if elm_type == 2 and len(node_ids) == 3:
-                        tris.append((phys, node_ids))
-                    elif elm_type == 4 and len(node_ids) == 4:
-                        tets.append((phys, node_ids))
-
-                    n_read += 1
-                    if n_read >= n_expected:
-                        section = None
+                    phys = int(phys_tags[0])
+                    etypes, _etags, enodes = gmsh.model.mesh.getElements(dim, int(etag))
+                    for ti, etype in enumerate(etypes):
+                        etype = int(etype)
+                        n_per = nodes_per_type.get(etype)
+                        if n_per == None:
+                            continue
+                        flat = enodes[ti]
+                        n_elem = len(flat) // n_per
+                        # Corner count for plot faces
+                        if etype in (2, 9):
+                            n_corners = 3
+                            bucket = tris
+                        elif etype in (4, 11):
+                            n_corners = 4
+                            bucket = tets
+                        else:
+                            continue
+                        for j in range(n_elem):
+                            base = j * n_per
+                            corners = tuple(
+                                int(flat[base + k]) for k in range(n_corners)
+                            )
+                            bucket.append((phys, corners))
+        finally:
+            if owns_gmsh and gmsh.isInitialized():
+                gmsh.finalize()
 
         return nodes, tris, tets
 
