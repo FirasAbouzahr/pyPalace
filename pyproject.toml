@@ -27,6 +27,10 @@ dev = [
     "black",
     "ruff"
 ]
+meshwell = [
+    "meshwell>=2.3",
+    "gdstk>=0.9"
+]
 
 [project.urls]
 Homepage = "https://github.com/FirasAbouzahr/pyPalace"

@@ -650,6 +650,148 @@ class Mesh:
         )
 
     @staticmethod
+    def inspect_gds(
+        gds_file: str | Path,
+        layer: tuple[int, int] = (1, 0),
+        cell_name: str | None = None,
+        *,
+        labeling: bool = True,
+        zoom_to_polygons: list[int] | int | None = None,
+        crop: tuple | None = None,
+        show: bool = True,
+        save: str | Path | None = None,
+    ):
+        """
+        Plot GDS polygons with stable ids and return a summary DataFrame.
+
+        Use ``poly_id`` values from the returned table when building a
+        SurfaceMap for :meth:`mesh_gds`. Requires optional ``meshwell`` /
+        ``gdstk`` (``pip install 'pypalace[meshwell]'``).
+        """
+        from .gds_mesh import inspect_gds
+
+        return inspect_gds(
+            gds_file,
+            layer=layer,
+            cell_name=cell_name,
+            labeling=labeling,
+            zoom_to_polygons=zoom_to_polygons,
+            crop=crop,
+            show=show,
+            save=save,
+        )
+
+    @staticmethod
+    def SurfaceMap(surface_map: dict, n_polygons: int | None = None) -> dict:
+        """
+        Validate / normalize a SurfaceMap for :meth:`mesh_gds`.
+
+        Parameters
+        ----------
+        surface_map : dict
+            Mapping of surface name → ``{"polygons": [...], "attr": int}``
+            or a bare list of polygon ids (attrs auto-assigned in
+            :meth:`mesh_gds`).
+        n_polygons : int, optional
+            If given, check polygon ids are in ``[0, n_polygons)``.
+
+        Returns
+        -------
+        dict
+            Normalized SurfaceMap.
+        """
+        from .gds_mesh import validate_surface_map
+
+        return validate_surface_map(surface_map, n_polygons=n_polygons)
+
+    @staticmethod
+    def mesh_gds(
+        gds_file: str | Path,
+        surface_map: dict,
+        output_mesh: str | Path = "mesh_from_gds.msh",
+        *,
+        metal_layer: tuple[int, int] = (1, 0),
+        cell_name: str | None = None,
+        substrate_thickness: float = 0.5,
+        airbox_height: float = 0.5,
+        margin: float = 0.5,
+        margin_x: float | None = None,
+        margin_y: float | None = None,
+        volume_mesh_size: float = 0.25,
+        surface_mesh_size: float = 0.02,
+        custom_surface_mesh: dict[str, float] | None = None,
+        refinement_radius: float = 0.15,
+        mesh_scale: float = 1000.0,
+        farfield_attr: int | str = "auto",
+        substrate_attr: int | str = "auto",
+        air_attr: int | str = "auto",
+        identify_arcs: bool = True,
+    ):
+        """
+        Mesh a GDS layout with MeshWell for Palace.
+
+        Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces
+        must be listed in ``surface_map`` (no auto ground plane). The Quantum
+        Metal mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged.
+
+        Requires optional ``meshwell`` / ``gdstk``:
+        ``pip install 'pypalace[meshwell]'``.
+
+        Parameters
+        ----------
+        gds_file : str or Path
+            Path to a ``.gds`` file.
+        surface_map : dict
+            Name → ``{"polygons": [poly_id, ...], "attr": int}``. Polygon ids
+            come from :meth:`inspect_gds`. Reserved names: ``substrate``,
+            ``air``, ``far_field``.
+        output_mesh : str or Path
+            Output ``.msh`` path.
+        metal_layer : tuple of int
+            GDS ``(layer, datatype)`` for circuit metal polygons.
+        cell_name : str, optional
+            GDS cell to read; default is the top cell.
+        substrate_thickness, airbox_height, margin, margin_x, margin_y:
+            Geometry lengths in the GDS units (before ``mesh_scale``).
+        volume_mesh_size, surface_mesh_size:
+            Default bulk / metal-surface mesh targets in GDS units.
+        custom_surface_mesh : dict, optional
+            Per-name surface size overrides (SurfaceMap names).
+        refinement_radius :
+            Distance over which surface sizing grows to ``volume_mesh_size``.
+        mesh_scale :
+            Multiplies coordinates before meshing. Use ``1000`` when GDS is in
+            mm and Palace uses ``L0 = 1e-6``.
+        farfield_attr, substrate_attr, air_attr :
+            Integer attributes or ``"auto"``.
+        identify_arcs :
+            Forwarded to MeshWell entities (circle/arc recovery).
+        """
+        from .gds_mesh import mesh_gds
+
+        return mesh_gds(
+            gds_file,
+            surface_map,
+            output_mesh=output_mesh,
+            metal_layer=metal_layer,
+            cell_name=cell_name,
+            substrate_thickness=substrate_thickness,
+            airbox_height=airbox_height,
+            margin=margin,
+            margin_x=margin_x,
+            margin_y=margin_y,
+            volume_mesh_size=volume_mesh_size,
+            surface_mesh_size=surface_mesh_size,
+            custom_surface_mesh=custom_surface_mesh,
+            refinement_radius=refinement_radius,
+            mesh_scale=mesh_scale,
+            farfield_attr=farfield_attr,
+            substrate_attr=substrate_attr,
+            air_attr=air_attr,
+            identify_arcs=identify_arcs,
+        )
+
+    @staticmethod
     def plot_mesh(
         meshfile,
         labeling=False,
