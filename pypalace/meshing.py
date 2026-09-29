@@ -738,13 +738,6 @@ class Mesh:
         air_attr: int | str = "auto",
         identify_arcs: bool = False,
         fuzzy_value: float | None = None,
-        enable_boundary_simplify: bool = True,
-        boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
-        simplify_min_edges: int = 10,
-        simplify_cluster_span: float | None = None,
-        simplify_short_edge: float | None = None,
-        simplify_smooth_angle_deg: float = 35.0,
-        simplify_max_deviation: float | None = None,
     ):
         """
         Mesh a GDS layout with MeshWell for Palace.
@@ -753,11 +746,9 @@ class Mesh:
         (CPW voids on the metal plane; not a Palace BC). Metal surfaces must
         be listed in ``surface_map`` (no auto ground plane). Pure MeshWell
         CAD: ``PolySurface`` metals nested by ``mesh_order`` plus a full-chip
-        gap surface attached to the substrate/air interface. Filleted GDS
-        boundaries are simplified by default (same heuristics as
-        :meth:`mesh_Quantum_Metal_design`) before MeshWell CAD. The Quantum
-        Metal mesher is unchanged and still uses mm design units with
-        ``mesh_scale=1000``.
+        gap surface attached to the substrate/air interface. The Quantum Metal
+        mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
+        mm design units with ``mesh_scale=1000``.
 
         Parameters
         ----------
@@ -793,14 +784,6 @@ class Mesh:
         fuzzy_value :
             OCC boolean fuzzy tolerance (mesh units). Default matches the
             internal polygon snap tolerance.
-        enable_boundary_simplify :
-            When ``True`` (default), merge short nearly-smooth edge runs on
-            SurfaceMap / chip polygons before MeshWell CAD.
-        boundary_simplify :
-            Optional full :class:`BoundarySimplifySettings` override.
-        simplify_min_edges, simplify_cluster_span, simplify_short_edge,
-        simplify_smooth_angle_deg, simplify_max_deviation :
-            Defaults for ``boundary_simplify`` when that object is omitted.
         """
         from .gds_mesh import mesh_gds
 
@@ -825,13 +808,6 @@ class Mesh:
             air_attr=air_attr,
             identify_arcs=identify_arcs,
             fuzzy_value=fuzzy_value,
-            enable_boundary_simplify=enable_boundary_simplify,
-            boundary_simplify=boundary_simplify,
-            simplify_min_edges=simplify_min_edges,
-            simplify_cluster_span=simplify_cluster_span,
-            simplify_short_edge=simplify_short_edge,
-            simplify_smooth_angle_deg=simplify_smooth_angle_deg,
-            simplify_max_deviation=simplify_max_deviation,
         )
 
     @staticmethod

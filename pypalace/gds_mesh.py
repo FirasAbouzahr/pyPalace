@@ -592,181 +592,6 @@ def _scale_polygon(poly: Polygon, mesh_scale: float) -> Polygon:
     return shapely_scale(poly, xfact=mesh_scale, yfact=mesh_scale, origin=(0, 0))
 
 
-def _simplify_ring_vertices(
-    coords,
-    settings,
-    *,
-    ring_tol: float,
-    max_chain_points: int = 12,
-) -> list[tuple[float, float]] | None:
-    """
-    Merge short nearly-smooth edge runs on a closed ring (QM-style).
-
-    Returns an open vertex list (no closing duplicate), or ``None`` if
-    simplification should be skipped for this ring.
-    """
-    from .meshing import Mesh
-
-    ring = list(coords)
-    if len(ring) >= 2 and ring[0] == ring[-1]:
-        ring = ring[:-1]
-    ring = Mesh._clean_ring_vertices(
-        [(float(x), float(y)) for x, y in ring], tol=ring_tol
-    )
-    if len(ring) < 3:
-        return None
-
-    chains = Mesh._decompose_ring_to_chains(ring, settings)
-    if not Mesh._ring_chains_are_closed(chains, tol=max(ring_tol, 1e-6)):
-        return None
-
-    out: list[tuple[float, float]] = []
-    for chain in chains:
-        if len(chain) == 2 or Mesh._is_colinear_chain(chain):
-            sampled = [chain[0], chain[-1]]
-        else:
-            sampled = Mesh._subsample_polyline_points(
-                chain, max_points=max_chain_points
-            )
-        if not out:
-            out.extend(sampled)
-        else:
-            out.extend(sampled[1:])
-
-    # Drop accidental closing duplicate from the last chain endpoint.
-    if len(out) > 1 and Mesh._xy_dist(out[0], out[-1]) <= max(ring_tol, 1e-6):
-        out.pop()
-    if len(out) < 3:
-        return None
-    return out
-
-
-def _simplify_polygon_boundary(
-    poly: Polygon,
-    settings,
-    *,
-    ring_tol: float,
-    area_rel_tol: float = 0.05,
-) -> tuple[Polygon, dict[str, int]]:
-    """
-    Simplify exterior/holes of one polygon; fall back to ``poly`` if invalid.
-
-    Returns ``(polygon, stats)`` where stats counts edges before/after.
-    """
-    from shapely.geometry.polygon import orient
-
-    stats = {
-        "polygon_edges": 0,
-        "simplified_edges": 0,
-        "merged_runs": 0,
-        "rings_simplified": 0,
-        "rings_skipped": 0,
-    }
-
-    def _ring_edge_count(coords) -> int:
-        n = len(coords)
-        if n >= 2 and coords[0] == coords[-1]:
-            return max(0, n - 1)
-        return n
-
-    ext_before = _ring_edge_count(list(poly.exterior.coords))
-    hole_before = sum(_ring_edge_count(list(h.coords)) for h in poly.interiors)
-    stats["polygon_edges"] = ext_before + hole_before
-
-    ext = _simplify_ring_vertices(poly.exterior.coords, settings, ring_tol=ring_tol)
-    if ext == None:
-        stats["rings_skipped"] += 1
-        stats["simplified_edges"] = stats["polygon_edges"]
-        return poly, stats
-    stats["rings_simplified"] += 1
-    stats["simplified_edges"] += len(ext)
-    if len(ext) < ext_before:
-        stats["merged_runs"] += 1
-
-    holes: list[list[tuple[float, float]]] = []
-    for interior in poly.interiors:
-        hole = _simplify_ring_vertices(interior.coords, settings, ring_tol=ring_tol)
-        if hole == None:
-            stats["rings_skipped"] += 1
-            hole = [
-                (float(x), float(y))
-                for x, y in (
-                    list(interior.coords)[:-1]
-                    if len(interior.coords) >= 2
-                    and interior.coords[0] == interior.coords[-1]
-                    else list(interior.coords)
-                )
-            ]
-        else:
-            stats["rings_simplified"] += 1
-            if len(hole) < _ring_edge_count(list(interior.coords)):
-                stats["merged_runs"] += 1
-        stats["simplified_edges"] += len(hole)
-        if len(hole) >= 3:
-            holes.append(hole)
-
-    try:
-        simplified = Polygon(ext, holes)
-    except Exception:
-        stats["simplified_edges"] = stats["polygon_edges"]
-        return poly, stats
-
-    if not simplified.is_valid:
-        try:
-            simplified = simplified.buffer(0)
-        except Exception:
-            stats["simplified_edges"] = stats["polygon_edges"]
-            return poly, stats
-
-    parts = _flatten_polygons(simplified)
-    if len(parts) != 1:
-        stats["simplified_edges"] = stats["polygon_edges"]
-        return poly, stats
-    simplified = parts[0]
-    if simplified.is_empty or simplified.area <= 0:
-        stats["simplified_edges"] = stats["polygon_edges"]
-        return poly, stats
-
-    # Reject large area distortion (over-aggressive merge).
-    if abs(simplified.area - poly.area) > area_rel_tol * max(poly.area, 1e-30):
-        stats["simplified_edges"] = stats["polygon_edges"]
-        return poly, stats
-
-    try:
-        simplified = orient(simplified, sign=1.0)
-    except Exception:
-        pass
-    return simplified, stats
-
-
-def _simplify_geometry_boundaries(
-    geom,
-    settings,
-    *,
-    ring_tol: float,
-) -> tuple[Any, dict[str, int]]:
-    """Simplify all polygon parts in a geometry; aggregate edge stats."""
-    total = {
-        "polygon_edges": 0,
-        "simplified_edges": 0,
-        "merged_runs": 0,
-        "rings_simplified": 0,
-        "rings_skipped": 0,
-    }
-    parts: list[Polygon] = []
-    for poly in _flatten_polygons(geom):
-        simplified, stats = _simplify_polygon_boundary(
-            poly, settings, ring_tol=ring_tol
-        )
-        for k in total:
-            total[k] += stats[k]
-        parts.append(simplified)
-    if not parts:
-        return geom, total
-    out = parts[0] if len(parts) == 1 else MultiPolygon(parts)
-    return out, total
-
-
 def mesh_gds(
     gds_file: str | Path,
     surface_map: dict,
@@ -789,13 +614,6 @@ def mesh_gds(
     air_attr: int | str = "auto",
     identify_arcs: bool = False,
     fuzzy_value: float | None = None,
-    enable_boundary_simplify: bool = True,
-    boundary_simplify: Any | None = None,
-    simplify_min_edges: int = 10,
-    simplify_cluster_span: float | None = None,
-    simplify_short_edge: float | None = None,
-    simplify_smooth_angle_deg: float = 35.0,
-    simplify_max_deviation: float | None = None,
 ) -> pd.DataFrame:
     """
     Mesh a GDS layout with MeshWell for Palace.
@@ -815,10 +633,8 @@ def mesh_gds(
     faces are then classified against the SurfaceMap footprints so large
     ground planes and CPW trenches both land on the volume interface.
 
-    Filleted GDS boundaries are simplified by default (same heuristics as
-    :meth:`Mesh.mesh_Quantum_Metal_design`) before MeshWell CAD, with
-    ``identify_arcs=False``. MeshWell arc recovery is opt-in and often
-    fails on this class of layouts.
+    ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
+    it on filleted GDS paths often triggers OpenCASCADE wire failures.
     """
     (
         generate_mesh,
@@ -967,62 +783,6 @@ def mesh_gds(
         raise ValueError("No SurfaceMap surfaces to mesh")
     if fuzzy_value == None:
         fuzzy_value = float(snap)
-
-    # QM-style short-edge merging on polygon rings before MeshWell CAD.
-    # Reduces fillet hypermeshing without MeshWell identify_arcs.
-    if enable_boundary_simplify:
-        if boundary_simplify == None:
-            boundary_simplify = Mesh.BoundarySimplifySettings(
-                min_edges=simplify_min_edges,
-                cluster_span=simplify_cluster_span,
-                short_edge=simplify_short_edge,
-                smooth_angle_deg=simplify_smooth_angle_deg,
-                max_deviation=simplify_max_deviation,
-            )
-        # Key simplify windows off surface_mesh_size (not finest custom JJ
-        # sizes). Otherwise a 0.1 µm JJ target collapses cluster_span so
-        # fillet runs never reach min_edges and nothing merges.
-        h_surf_um = float(surface_mesh_size) * mesh_scale
-        settings = Mesh._resolve_boundary_simplify_settings(
-            boundary_simplify,
-            h_surf_um,
-            float(mesh_scale),
-            finest_surface_mesh_size=h_surf_um,
-        )
-        ring_tol = max(1e-9, h_surf_um * 1e-6)
-        simplify_totals = {
-            "polygon_edges": 0,
-            "simplified_edges": 0,
-            "merged_runs": 0,
-            "rings_simplified": 0,
-            "rings_skipped": 0,
-        }
-        for name in list(name_geoms.keys()):
-            name_geoms[name], stats = _simplify_geometry_boundaries(
-                name_geoms[name], settings, ring_tol=ring_tol
-            )
-            for k in simplify_totals:
-                simplify_totals[k] += stats[k]
-        chip, chip_stats = _simplify_geometry_boundaries(
-            chip, settings, ring_tol=ring_tol
-        )
-        for k in simplify_totals:
-            simplify_totals[k] += chip_stats[k]
-        # Re-sort after simplify (areas may change slightly).
-        ordered_names = sorted(
-            name_geoms.keys(),
-            key=lambda n: (float(name_geoms[n].area), smap[n]["attr"], n),
-        )
-        print(
-            "boundary simplify: edges {} → {}, merged_runs={}, "
-            "rings_simplified={}, rings_skipped={}".format(
-                simplify_totals["polygon_edges"],
-                simplify_totals["simplified_edges"],
-                simplify_totals["merged_runs"],
-                simplify_totals["rings_simplified"],
-                simplify_totals["rings_skipped"],
-            )
-        )
 
     output_path = Path(output_mesh)
     output_path.parent.mkdir(parents=True, exist_ok=True)
