@@ -742,10 +742,11 @@ class Mesh:
         """
         Mesh a GDS layout with MeshWell for Palace.
 
-        Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces
-        must be listed in ``surface_map`` (no auto ground plane). The Quantum
-        Metal mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still
-        uses mm design units with ``mesh_scale=1000``.
+        Auto-tags ``substrate``, ``air``, ``far_field``, and ``dielectric_gap``
+        (CPW voids on the metal plane; not a Palace BC). Metal surfaces must
+        be listed in ``surface_map`` (no auto ground plane). The Quantum Metal
+        mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
+        mm design units with ``mesh_scale=1000``.
 
         Parameters
         ----------
