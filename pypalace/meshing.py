@@ -164,62 +164,74 @@ class Mesh:
 
     @staticmethod
     def _read_msh_for_plot(filename: str | Path):
+        """
+        Load triangle/tet connectivity for plotting.
+
+        Uses Gmsh so both MSH 2.2 (Quantum Metal path) and MSH 4.x
+        (MeshWell default) are supported.
+        """
+        import gmsh
+
         nodes: dict[int, tuple[float, float, float]] = {}
         tris: list[tuple[int, tuple[int, int, int]]] = []
         tets: list[tuple[int, tuple[int, int, int, int]]] = []
 
-        section = None
-        n_expected = 0
-        n_read = 0
+        # MSH element type → nodes per element (linear only for plot cuts)
+        nodes_per_type = {
+            2: 3,   # 3-node triangle
+            4: 4,   # 4-node tet
+            9: 6,   # 6-node second-order triangle (take first 3 corners)
+            11: 10, # 10-node second-order tet (take first 4 corners)
+        }
 
-        with open(filename, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith("$"):
-                    if line == "$Nodes":
-                        section = "nodes"
-                        n_read = 0
-                        n_expected = 0
-                    elif line == "$Elements":
-                        section = "elements"
-                        n_read = 0
-                        n_expected = 0
-                    elif line.startswith("$End"):
-                        section = None
-                    continue
+        owns_gmsh = not gmsh.isInitialized()
+        if owns_gmsh:
+            gmsh.initialize()
+        try:
+            gmsh.open(str(filename))
 
-                if section == "nodes":
-                    if n_expected == 0:
-                        n_expected = int(line)
+            node_tags, coords, _ = gmsh.model.mesh.getNodes()
+            for i, tag in enumerate(node_tags):
+                nodes[int(tag)] = (
+                    float(coords[3 * i]),
+                    float(coords[3 * i + 1]),
+                    float(coords[3 * i + 2]),
+                )
+
+            for dim in (2, 3):
+                for _, etag in gmsh.model.getEntities(dim):
+                    phys_tags = list(
+                        gmsh.model.getPhysicalGroupsForEntity(dim, int(etag))
+                    )
+                    if len(phys_tags) == 0:
                         continue
-                    parts = line.split()
-                    nid = int(parts[0])
-                    nodes[nid] = (float(parts[1]), float(parts[2]), float(parts[3]))
-                    n_read += 1
-                    if n_read >= n_expected:
-                        section = None
-
-                elif section == "elements":
-                    if n_expected == 0:
-                        n_expected = int(line)
-                        continue
-                    parts = line.split()
-                    elm_type = int(parts[1])
-                    num_tags = int(parts[2])
-                    phys = int(parts[3])
-                    node_start = 3 + num_tags
-                    node_ids = tuple(int(x) for x in parts[node_start:])
-
-                    if elm_type == 2 and len(node_ids) == 3:
-                        tris.append((phys, node_ids))
-                    elif elm_type == 4 and len(node_ids) == 4:
-                        tets.append((phys, node_ids))
-
-                    n_read += 1
-                    if n_read >= n_expected:
-                        section = None
+                    phys = int(phys_tags[0])
+                    etypes, _etags, enodes = gmsh.model.mesh.getElements(dim, int(etag))
+                    for ti, etype in enumerate(etypes):
+                        etype = int(etype)
+                        n_per = nodes_per_type.get(etype)
+                        if n_per == None:
+                            continue
+                        flat = enodes[ti]
+                        n_elem = len(flat) // n_per
+                        # Corner count for plot faces
+                        if etype in (2, 9):
+                            n_corners = 3
+                            bucket = tris
+                        elif etype in (4, 11):
+                            n_corners = 4
+                            bucket = tets
+                        else:
+                            continue
+                        for j in range(n_elem):
+                            base = j * n_per
+                            corners = tuple(
+                                int(flat[base + k]) for k in range(n_corners)
+                            )
+                            bucket.append((phys, corners))
+        finally:
+            if owns_gmsh and gmsh.isInitialized():
+                gmsh.finalize()
 
         return nodes, tris, tets
 
@@ -647,6 +659,189 @@ class Mesh:
             min(xmax, fxmax),
             max(ymin, fymin),
             min(ymax, fymax),
+        )
+
+    @staticmethod
+    def inspect_gds(
+        gds_file: str | Path,
+        layer: tuple[int, int] = (1, 0),
+        cell_name: str | None = None,
+        *,
+        labeling: bool = True,
+        gaps_only: bool = False,
+        zoom_to_polygons: list[int] | int | None = None,
+        crop: tuple | None = None,
+        show: bool = True,
+        save: str | Path | None = None,
+    ):
+        """
+        Plot GDS polygons or dielectric-gap pieces with stable ids.
+
+        Default: metal ``poly_id`` / ``p*`` labels for a SurfaceMap.
+        ``gaps_only=True``: interior gap ``gap_id`` / ``g*`` labels for an
+        optional ``gap_map`` (tight metal bbox; ignores mesh ``margin_*``).
+        """
+        from .gds_mesh import inspect_gds
+
+        return inspect_gds(
+            gds_file,
+            layer=layer,
+            cell_name=cell_name,
+            labeling=labeling,
+            gaps_only=gaps_only,
+            zoom_to_polygons=zoom_to_polygons,
+            crop=crop,
+            show=show,
+            save=save,
+        )
+
+    @staticmethod
+    def SurfaceMap(surface_map: dict, n_polygons: int | None = None) -> dict:
+        """
+        Validate / normalize a SurfaceMap for :meth:`mesh_gds`.
+
+        Parameters
+        ----------
+        surface_map : dict
+            Mapping of surface name → ``{"polygons": [...], "attr": int}``
+            or a bare list of polygon ids (attrs auto-assigned in
+            :meth:`mesh_gds`).
+        n_polygons : int, optional
+            If given, check polygon ids are in ``[0, n_polygons)``.
+
+        Returns
+        -------
+        dict
+            Normalized SurfaceMap.
+        """
+        from .gds_mesh import validate_surface_map
+
+        return validate_surface_map(surface_map, n_polygons=n_polygons)
+
+    @staticmethod
+    def GapMap(gap_map: dict, n_gaps: int | None = None) -> dict:
+        """
+        Validate / normalize a GapMap for :meth:`mesh_gds`.
+
+        Parameters
+        ----------
+        gap_map : dict
+            Mapping of name → ``{"gaps": [...], "attr": int}`` or a bare list
+            of gap ids from :meth:`inspect_gds` (``gaps_only=True``).
+        n_gaps : int, optional
+            If given, check gap ids are in ``[0, n_gaps)``.
+        """
+        from .gds_mesh import validate_gap_map
+
+        return validate_gap_map(gap_map, n_gaps=n_gaps)
+
+    @staticmethod
+    def mesh_gds(
+        gds_file: str | Path,
+        surface_map: dict,
+        output_mesh: str | Path = "mesh_from_gds.msh",
+        *,
+        metal_layer: tuple[int, int] = (1, 0),
+        cell_name: str | None = None,
+        substrate_thickness: float = 500.0,
+        airbox_height: float = 500.0,
+        airbox_height_below: float = 0.0,
+        margin: float = 500.0,
+        margin_x: float | None = None,
+        margin_y: float | None = None,
+        volume_mesh_size: float = 250.0,
+        surface_mesh_size: float = 20.0,
+        custom_surface_mesh: dict[str, float] | None = None,
+        refinement_radius: float = 150.0,
+        mesh_scale: float = 1.0,
+        farfield_attr: int | str = "auto",
+        substrate_attr: int | str = "auto",
+        air_attr: int | str = "auto",
+        gap_map: dict | None = None,
+        identify_arcs: bool = False,
+        fuzzy_value: float | None = None,
+    ):
+        """
+        Mesh a GDS layout with MeshWell for Palace.
+
+        Auto-tags ``substrate``, ``air``, ``far_field``, and ``dielectric_gap``
+        (CPW voids on the metal plane; not a Palace BC). Metal surfaces must
+        be listed in ``surface_map`` (no auto ground plane). Pure MeshWell
+        CAD: ``PolySurface`` metals nested by ``mesh_order`` plus a full-chip
+        gap surface attached to the substrate/air interface. The Quantum Metal
+        mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
+        mm design units with ``mesh_scale=1000``.
+
+        Parameters
+        ----------
+        gds_file : str or Path
+            Path to a ``.gds`` file.
+        surface_map : dict
+            Name → ``{"polygons": [poly_id, ...], "attr": int}``. Polygon ids
+            come from :meth:`inspect_gds`. Reserved names: ``substrate``,
+            ``air``, ``far_field``.
+        output_mesh : str or Path
+            Output ``.msh`` path (Gmsh MSH 2.2 ASCII — required by Palace/MFEM).
+        metal_layer : tuple of int
+            GDS ``(layer, datatype)`` for circuit metal polygons.
+        cell_name : str, optional
+            GDS cell to read; default is the top cell.
+        substrate_thickness, airbox_height, margin, margin_x, margin_y:
+            Geometry lengths in **µm** (before ``mesh_scale``).
+            ``airbox_height`` is vacuum above the metal plane (default 500).
+        airbox_height_below :
+            Optional vacuum under the substrate in **µm**. Default ``0``
+            (unchanged stack). When > 0, tagged as Palace ``air`` and
+            far_field expands to the new bottom / sides.
+        volume_mesh_size, surface_mesh_size:
+            Default bulk / metal-surface mesh targets in **µm**.
+        custom_surface_mesh : dict, optional
+            Per-name surface size overrides (SurfaceMap names), in **µm**.
+        refinement_radius :
+            Distance over which surface sizing grows to ``volume_mesh_size``
+            (µm).
+        mesh_scale :
+            Multiplies coordinates before meshing. Default ``1`` for µm GDS
+            (Palace ``L0 = 1e-6``). Use ``1000`` only if the GDS is in mm.
+        farfield_attr, substrate_attr, air_attr :
+            Integer attributes or ``"auto"``.
+        gap_map : dict, optional
+            Optional name → ``{"gaps": [gap_id, ...], "attr": int}``. Gap ids
+            from :meth:`inspect_gds` (``gaps_only=True``) — interior voids
+            only; independent of ``margin_*``. Omitted → single leftover
+            ``dielectric_gap``.
+        identify_arcs :
+            MeshWell circle/arc recovery. Default ``False`` — enabling this on
+            filleted GDS paths often causes OpenCASCADE wire failures.
+        fuzzy_value :
+            OCC boolean fuzzy tolerance (mesh units). Default matches the
+            internal polygon snap tolerance.
+        """
+        from .gds_mesh import mesh_gds
+
+        return mesh_gds(
+            gds_file,
+            surface_map,
+            output_mesh=output_mesh,
+            metal_layer=metal_layer,
+            cell_name=cell_name,
+            substrate_thickness=substrate_thickness,
+            airbox_height=airbox_height,
+            airbox_height_below=airbox_height_below,
+            margin=margin,
+            margin_x=margin_x,
+            margin_y=margin_y,
+            volume_mesh_size=volume_mesh_size,
+            surface_mesh_size=surface_mesh_size,
+            custom_surface_mesh=custom_surface_mesh,
+            refinement_radius=refinement_radius,
+            mesh_scale=mesh_scale,
+            farfield_attr=farfield_attr,
+            substrate_attr=substrate_attr,
+            air_attr=air_attr,
+            gap_map=gap_map,
+            identify_arcs=identify_arcs,
+            fuzzy_value=fuzzy_value,
         )
 
     @staticmethod
