@@ -664,7 +664,7 @@ class Mesh:
     @staticmethod
     def inspect_gds(
         gds_file: str | Path,
-        metal_layers=None,
+        layers=None,
         cell_name: str | None = None,
         *,
         labeling: bool = True,
@@ -681,14 +681,15 @@ class Mesh:
         ``gaps_only=True``: interior gap ``gap_id`` / ``g*`` labels for an
         optional ``gap_map`` (tight metal bbox; ignores mesh ``margin_*``).
 
-        ``metal_layers``: sequence of GDS ``(layer, datatype)`` pairs merged
-        onto one plane (default ``[(1, 0)]``). Match :meth:`mesh_gds`.
+        ``layers``: sequence of GDS ``(layer, datatype)`` pairs merged onto
+        one plane, or ``None`` (default) for **all** layers in the cell.
+        Match :meth:`mesh_gds`.
         """
         from .gds_mesh import inspect_gds
 
         return inspect_gds(
             gds_file,
-            metal_layers=metal_layers,
+            layers=layers,
             cell_name=cell_name,
             labeling=labeling,
             gaps_only=gaps_only,
@@ -744,7 +745,7 @@ class Mesh:
         surface_map: dict,
         output_mesh: str | Path = "mesh_from_gds.msh",
         *,
-        metal_layers=None,
+        layers=None,
         cell_name: str | None = None,
         substrate_thickness: float = 500.0,
         airbox_height: float = 500.0,
@@ -785,10 +786,10 @@ class Mesh:
             ``air``, ``far_field``.
         output_mesh : str or Path
             Output ``.msh`` path (Gmsh MSH 2.2 ASCII — required by Palace/MFEM).
-        metal_layers :
+        layers :
             Sequence of GDS ``(layer, datatype)`` pairs merged onto the z=0
-            metal plane. Default ``[(1, 0)]``. Example:
-            ``[(1, 0), (2, 0)]``. Use the same list in :meth:`inspect_gds`.
+            metal plane, e.g. ``[(1, 0), (2, 0)]``. Default ``None`` = **all**
+            layers in the cell. Use the same value in :meth:`inspect_gds`.
         cell_name : str, optional
             GDS cell to read; default is the top cell.
         substrate_thickness, airbox_height, margin, margin_x, margin_y:
@@ -828,7 +829,7 @@ class Mesh:
             gds_file,
             surface_map,
             output_mesh=output_mesh,
-            metal_layers=metal_layers,
+            layers=layers,
             cell_name=cell_name,
             substrate_thickness=substrate_thickness,
             airbox_height=airbox_height,
