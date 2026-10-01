@@ -668,16 +668,21 @@ class Mesh:
         cell_name: str | None = None,
         *,
         labeling: bool = True,
+        gaps_only: bool = False,
+        margin: float = 0.0,
+        margin_x: float | None = None,
+        margin_y: float | None = None,
         zoom_to_polygons: list[int] | int | None = None,
         crop: tuple | None = None,
         show: bool = True,
         save: str | Path | None = None,
     ):
         """
-        Plot GDS polygons with stable ids and return a summary DataFrame.
+        Plot GDS polygons or dielectric-gap pieces with stable ids.
 
-        Use ``poly_id`` values from the returned table when building a
-        SurfaceMap for :meth:`mesh_gds`.
+        Default: metal ``poly_id`` / ``p*`` labels for a SurfaceMap.
+        ``gaps_only=True``: gap ``gap_id`` / ``g*`` labels for an optional
+        ``gap_map`` (pass the same ``margin_*`` as :meth:`mesh_gds`).
         """
         from .gds_mesh import inspect_gds
 
@@ -686,6 +691,10 @@ class Mesh:
             layer=layer,
             cell_name=cell_name,
             labeling=labeling,
+            gaps_only=gaps_only,
+            margin=margin,
+            margin_x=margin_x,
+            margin_y=margin_y,
             zoom_to_polygons=zoom_to_polygons,
             crop=crop,
             show=show,
@@ -716,6 +725,23 @@ class Mesh:
         return validate_surface_map(surface_map, n_polygons=n_polygons)
 
     @staticmethod
+    def GapMap(gap_map: dict, n_gaps: int | None = None) -> dict:
+        """
+        Validate / normalize a GapMap for :meth:`mesh_gds`.
+
+        Parameters
+        ----------
+        gap_map : dict
+            Mapping of name → ``{"gaps": [...], "attr": int}`` or a bare list
+            of gap ids from :meth:`inspect_gds` (``gaps_only=True``).
+        n_gaps : int, optional
+            If given, check gap ids are in ``[0, n_gaps)``.
+        """
+        from .gds_mesh import validate_gap_map
+
+        return validate_gap_map(gap_map, n_gaps=n_gaps)
+
+    @staticmethod
     def mesh_gds(
         gds_file: str | Path,
         surface_map: dict,
@@ -737,6 +763,7 @@ class Mesh:
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
+        gap_map: dict | None = None,
         identify_arcs: bool = False,
         fuzzy_value: float | None = None,
     ):
@@ -784,6 +811,10 @@ class Mesh:
             (Palace ``L0 = 1e-6``). Use ``1000`` only if the GDS is in mm.
         farfield_attr, substrate_attr, air_attr :
             Integer attributes or ``"auto"``.
+        gap_map : dict, optional
+            Optional name → ``{"gaps": [gap_id, ...], "attr": int}``. Gap ids
+            from :meth:`inspect_gds` (``gaps_only=True``) with the same
+            ``margin_*``. Omitted → single leftover ``dielectric_gap``.
         identify_arcs :
             MeshWell circle/arc recovery. Default ``False`` — enabling this on
             filleted GDS paths often causes OpenCASCADE wire failures.
@@ -813,6 +844,7 @@ class Mesh:
             farfield_attr=farfield_attr,
             substrate_attr=substrate_attr,
             air_attr=air_attr,
+            gap_map=gap_map,
             identify_arcs=identify_arcs,
             fuzzy_value=fuzzy_value,
         )

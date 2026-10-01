@@ -3,10 +3,11 @@ GDS inspection and MeshWell-backed meshing for Palace workflows.
 
 This module implements the GDS path:
 
-1. :func:`inspect_gds` — plot polygons with stable ids and return a DataFrame
-2. :func:`validate_surface_map` / SurfaceMap dict — name → polygon ids + attr
-3. :func:`mesh_gds` — MeshWell CAD/mesh with auto ``substrate``, ``air``,
-   ``far_field`` tags (no auto ground plane)
+1. :func:`inspect_gds` — plot metal ``p*`` or gap ``g*`` ids (``gaps_only``)
+2. :func:`validate_surface_map` / SurfaceMap — name → polygon ids + attr
+3. Optional :func:`validate_gap_map` / GapMap — name → gap ids + attr
+4. :func:`mesh_gds` — MeshWell CAD/mesh with auto ``substrate``, ``air``,
+   ``far_field``, ``dielectric_gap`` (optional named gaps via ``gap_map``)
 
 Default units are **micrometers (µm)** with ``mesh_scale=1`` (Palace
 ``L0 = 1e-6``).
@@ -355,8 +356,128 @@ def assign_missing_attrs(surface_map: dict[str, dict], start: int = 1) -> dict[s
             attr = next_attr
             used.add(attr)
             next_attr += 1
-        out[name] = {"polygons": list(entry["polygons"]), "attr": int(attr)}
+        # Preserve polygons- or gaps-based maps.
+        out_entry = {"attr": int(attr)}
+        if "polygons" in entry:
+            out_entry["polygons"] = list(entry["polygons"])
+        if "gaps" in entry:
+            out_entry["gaps"] = list(entry["gaps"])
+        out[name] = out_entry
     return out
+
+
+def _geom_sort_key(p: Polygon):
+    c = p.centroid
+    return (float(c.x), float(c.y), float(p.area))
+
+
+def enumerate_gap_pieces(
+    polys: list[Polygon],
+    margin_x: float = 0.0,
+    margin_y: float = 0.0,
+) -> list[Polygon]:
+    """
+    Stable-ordered dielectric-gap pieces: ``chip_bbox − union(metals)``.
+
+    Ids match :func:`inspect_gds` (``gaps_only=True``) and :func:`mesh_gds`
+    ``gap_map``. ``margin_*`` must match the mesh call for id stability.
+    """
+    if not polys:
+        return []
+    chip = _chip_bbox(polys, float(margin_x), float(margin_y))
+    metals = unary_union(polys)
+    if metals is None or getattr(metals, "is_empty", False):
+        raw = chip
+    else:
+        raw = chip.difference(metals)
+    pieces = [p for p in _flatten_polygons(raw) if not p.is_empty and p.area > 0]
+    return sorted(pieces, key=_geom_sort_key)
+
+
+def validate_gap_map(
+    gap_map: dict,
+    n_gaps: int | None = None,
+    *,
+    reserved_names: set[str] | None = None,
+) -> dict[str, dict]:
+    """
+    Normalize a GapMap dict: name → ``{"gaps": [gap_id, ...], "attr": int|None}``.
+
+    Gap ids come from :func:`inspect_gds` with ``gaps_only=True`` / 
+    :func:`enumerate_gap_pieces`.
+    """
+    if not isinstance(gap_map, dict):
+        raise ValueError("gap_map must be a dict of name → tagging entry")
+    if len(gap_map) == 0:
+        return {}
+
+    reserved = set(reserved_names or ())
+    reserved.update(
+        {"substrate", "air", "air_below", "far_field", "dielectric_gap"}
+    )
+    normalized: dict[str, dict] = {}
+    used_gaps: dict[int, str] = {}
+    used_attrs: dict[int, str] = {}
+
+    for name, entry in gap_map.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"GapMap keys must be non-empty strings, got {name!r}")
+        if name in reserved:
+            raise ValueError(f"GapMap name {name!r} is reserved")
+
+        if isinstance(entry, (list, tuple, set)):
+            gap_ids = list(entry)
+            attr = None
+        elif isinstance(entry, dict):
+            if "gaps" not in entry:
+                raise ValueError(f"GapMap[{name!r}] dict must include 'gaps'")
+            gaps = entry["gaps"]
+            if isinstance(gaps, (int, np.integer)):
+                gap_ids = [int(gaps)]
+            else:
+                gap_ids = list(gaps)
+            attr = entry.get("attr", None)
+            if attr != None:
+                attr = int(attr)
+        else:
+            raise ValueError(
+                f"GapMap[{name!r}] must be a dict or list of gap ids"
+            )
+
+        if len(gap_ids) == 0:
+            raise ValueError(f"GapMap[{name!r}] has empty gaps list")
+
+        clean_ids = []
+        for gid in gap_ids:
+            gid = int(gid)
+            if n_gaps != None and (gid < 0 or gid >= n_gaps):
+                raise ValueError(
+                    f"GapMap[{name!r}] gap id {gid} out of range "
+                    f"[0, {n_gaps - 1}]"
+                )
+            if gid in used_gaps:
+                raise ValueError(
+                    f"Gap id {gid} is assigned to both "
+                    f"{used_gaps[gid]!r} and {name!r}"
+                )
+            used_gaps[gid] = name
+            clean_ids.append(gid)
+
+        if attr != None:
+            if attr <= 0:
+                raise ValueError(
+                    f"GapMap[{name!r}] attr must be a positive integer"
+                )
+            if attr in used_attrs:
+                raise ValueError(
+                    f"Attribute id {attr} is assigned to both "
+                    f"{used_attrs[attr]!r} and {name!r}"
+                )
+            used_attrs[attr] = name
+
+        normalized[name] = {"gaps": clean_ids, "attr": attr}
+
+    return normalized
 
 
 def inspect_gds(
@@ -365,16 +486,25 @@ def inspect_gds(
     cell_name: str | None = None,
     *,
     labeling: bool = True,
+    gaps_only: bool = False,
+    margin: float = 0.0,
+    margin_x: float | None = None,
+    margin_y: float | None = None,
     zoom_to_polygons: list[int] | int | None = None,
     crop: tuple | None = None,
     show: bool = True,
     save: str | Path | None = None,
 ) -> pd.DataFrame:
     """
-    Plot GDS polygons with stable ids and return a summary DataFrame.
+    Plot GDS polygons or dielectric-gap pieces with stable ids.
 
-    Use the returned ``poly_id`` values when building a SurfaceMap for
-    :func:`mesh_gds`.
+    Default (``gaps_only=False``): metal polygons labeled ``p*`` — use
+    ``poly_id`` for a SurfaceMap.
+
+    Gap mode (``gaps_only=True``): only ``chip − metals`` pieces labeled
+    ``g*`` — use ``gap_id`` for an optional ``gap_map`` in :func:`mesh_gds`.
+    Pass the same ``margin`` / ``margin_x`` / ``margin_y`` as meshing so ids
+    match. Default margins are ``0`` for a readable on-chip gap view.
     """
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
@@ -386,13 +516,41 @@ def inspect_gds(
             + (f" (cell={cell_name!r})" if cell_name else "")
         )
 
+    if margin_x == None:
+        margin_x = margin
+    if margin_y == None:
+        margin_y = margin
+
+    if gaps_only:
+        pieces = enumerate_gap_pieces(polys, float(margin_x), float(margin_y))
+        if len(pieces) == 0:
+            raise ValueError(
+                "No dielectric-gap pieces found (chip − metals is empty). "
+                "Check margin_* or the metal layer."
+            )
+        id_key = "gap_id"
+        label_prefix = "g"
+        title = (
+            f"GDS dielectric gaps — layer {tuple(layer)} "
+            f"({len(pieces)} gaps, margin=({margin_x:g},{margin_y:g}))"
+        )
+        draw_polys = pieces
+        # Faint metal outlines for context only (no p* labels).
+        outline_polys = polys
+    else:
+        id_key = "poly_id"
+        label_prefix = "p"
+        title = f"GDS polygons — layer {tuple(layer)} ({len(polys)} polys)"
+        draw_polys = polys
+        outline_polys = []
+
     rows = []
-    for i, p in enumerate(polys):
+    for i, p in enumerate(draw_polys):
         minx, miny, maxx, maxy = p.bounds
         c = p.centroid
         rows.append(
             {
-                "poly_id": i,
+                id_key: i,
                 "area": float(p.area),
                 "centroid_x": float(c.x),
                 "centroid_y": float(c.y),
@@ -421,10 +579,21 @@ def inspect_gds(
     )
 
     fig, ax = plt.subplots()
-    # draw large → small so tiny polygons stay visible
-    order = sorted(range(len(polys)), key=lambda i: polys[i].area, reverse=True)
+    for op in outline_polys:
+        ring = np.asarray(op.exterior.coords)
+        ax.add_collection(
+            PolyCollection(
+                [ring[:, :2]],
+                facecolors="none",
+                edgecolors="0.55",
+                linewidths=0.4,
+                alpha=0.8,
+            )
+        )
+
+    order = sorted(range(len(draw_polys)), key=lambda i: draw_polys[i].area, reverse=True)
     for i in order:
-        p = polys[i]
+        p = draw_polys[i]
         ring = np.asarray(p.exterior.coords)
         color = colors[i % len(colors)]
         ax.add_collection(
@@ -462,11 +631,11 @@ def inspect_gds(
         else:
             zoom_ids = [int(x) for x in zoom_to_polygons]
         for pid in zoom_ids:
-            if pid < 0 or pid >= len(polys):
+            if pid < 0 or pid >= len(draw_polys):
                 raise ValueError(f"zoom_to_polygons id {pid} out of range")
         xs, ys = [], []
         for pid in zoom_ids:
-            minx, miny, maxx, maxy = polys[pid].bounds
+            minx, miny, maxx, maxy = draw_polys[pid].bounds
             xs.extend([minx, maxx])
             ys.extend([miny, maxy])
         pad = 0.05 * max(max(xs) - min(xs), max(ys) - min(ys), 1e-9)
@@ -485,8 +654,6 @@ def inspect_gds(
     if labeling:
         from shapely.geometry import Point as ShapelyPoint
 
-        # Color-matched top-right callouts so nested/centered polygons stay
-        # distinguishable (label color == surface color + arrow to attach point).
         xspan = max(xmax - xmin, 1e-12)
         yspan = max(ymax - ymin, 1e-12)
         dx = 0.035 * xspan
@@ -494,13 +661,13 @@ def inspect_gds(
         occupied: list[tuple[float, float]] = []
         min_sep = 0.04 * max(xspan, yspan)
 
-        # Draw large → small so small-polygon callouts stay on top.
-        for i in sorted(range(len(polys)), key=lambda k: polys[k].area, reverse=True):
-            p = polys[i]
+        for i in sorted(
+            range(len(draw_polys)), key=lambda k: draw_polys[k].area, reverse=True
+        ):
+            p = draw_polys[i]
             color = colors[i % len(colors)]
             minx_p, miny_p, maxx_p, maxy_p = p.bounds
             anchor_x, anchor_y = float(maxx_p), float(maxy_p)
-            # If the bbox corner is outside the polygon, snap to nearest boundary.
             if not p.intersects(ShapelyPoint(anchor_x, anchor_y)):
                 nearest = p.exterior.interpolate(
                     p.exterior.project(ShapelyPoint(anchor_x, anchor_y))
@@ -521,7 +688,7 @@ def inspect_gds(
             occupied.append((text_x, text_y))
 
             ax.annotate(
-                f"p{i}",
+                f"{label_prefix}{i}",
                 xy=(anchor_x, anchor_y),
                 xytext=(text_x, text_y),
                 fontsize=8,
@@ -561,7 +728,7 @@ def inspect_gds(
     ax.set_aspect("equal")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.set_title(f"GDS polygons — layer {tuple(layer)} ({len(polys)} polys)")
+    ax.set_title(title)
 
     if save != None:
         fig.savefig(str(save), dpi=150, bbox_inches="tight")
@@ -613,6 +780,7 @@ def mesh_gds(
     farfield_attr: int | str = "auto",
     substrate_attr: int | str = "auto",
     air_attr: int | str = "auto",
+    gap_map: dict | None = None,
     identify_arcs: bool = False,
     fuzzy_value: float | None = None,
 ) -> pd.DataFrame:
@@ -638,6 +806,11 @@ def mesh_gds(
     ``airbox_height_below`` adds optional vacuum under the substrate
     (default **0** — same stack as before). When set, that volume shares the
     Palace ``air`` attribute and far_field grows to the new bottom / sides.
+
+    Optional ``gap_map`` names a subset of dielectric-gap pieces (ids from
+    :func:`inspect_gds` with ``gaps_only=True``) for Palace post-processing.
+    Omitted / empty keeps a single leftover ``dielectric_gap`` (prior behavior).
+    Unmapped gap pieces still mesh as dielectric and stay in ``dielectric_gap``.
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
@@ -668,6 +841,8 @@ def mesh_gds(
         margin_y = margin
     if custom_surface_mesh == None:
         custom_surface_mesh = {}
+    if gap_map == None:
+        gap_map = {}
     if float(substrate_thickness) <= 0:
         raise ValueError("substrate_thickness must be > 0")
     if float(airbox_height) <= 0:
@@ -675,7 +850,15 @@ def mesh_gds(
     if float(airbox_height_below) < 0:
         raise ValueError("airbox_height_below must be >= 0 (0 keeps prior behavior)")
 
-    # Auto volume / far_field attrs after user surface attrs
+    # Gap pieces in GDS units (same enum as inspect_gds gaps_only=True).
+    gap_pieces = enumerate_gap_pieces(polys, float(margin_x), float(margin_y))
+    gmap = validate_gap_map(
+        gap_map,
+        n_gaps=len(gap_pieces),
+        reserved_names=set(smap.keys()),
+    )
+
+    # Auto volume / far_field / default-gap attrs after user surface attrs
     max_user = max(v["attr"] for v in smap.values())
     if substrate_attr == "auto":
         substrate_attr = max_user + 1
@@ -697,12 +880,33 @@ def mesh_gds(
         "far_field": farfield_attr,
         "dielectric_gap": gap_attr,
     }
-    for name, attr in smap.items():
+    for name, entry in smap.items():
         for rname, rattr in reserved.items():
-            if attr["attr"] == rattr:
+            if entry["attr"] == rattr:
                 raise ValueError(
                     f"SurfaceMap[{name!r}] attr={rattr} collides with auto-tagged {rname!r}"
                 )
+
+    # Named gap attrs: keep explicit ones, auto-fill after dielectric_gap.
+    used_attrs = {int(v["attr"]) for v in smap.values()} | set(reserved.values())
+    for name, entry in gmap.items():
+        attr = entry["attr"]
+        if attr != None:
+            if int(attr) in used_attrs:
+                raise ValueError(
+                    f"GapMap[{name!r}] attr={attr} collides with an existing attribute"
+                )
+            used_attrs.add(int(attr))
+    gmap = assign_missing_attrs(gmap, start=gap_attr + 1)
+    for name, entry in gmap.items():
+        if int(entry["attr"]) in reserved.values():
+            raise ValueError(
+                f"GapMap[{name!r}] attr={entry['attr']} collides with a reserved attribute"
+            )
+        if int(entry["attr"]) in {int(v["attr"]) for v in smap.values()}:
+            raise ValueError(
+                f"GapMap[{name!r}] attr={entry['attr']} collides with a SurfaceMap attribute"
+            )
 
     # Geometry in mesh units (µm by default). Snap ~1 nm to kill micro-edges
     # that break OCC wires without collapsing real JJ-scale features.
@@ -905,6 +1109,19 @@ def mesh_gds(
             "mismatch. Check SurfaceMap polygons via inspect_gds(...)."
         ) from e
 
+    # Scale gap pieces into mesh units for z=0 classification (ids match inspect).
+    gap_geoms: dict[str, Any] = {}
+    for name, entry in gmap.items():
+        parts: list[Polygon] = []
+        for gid in entry["gaps"]:
+            scaled_parts = _clean_polygon(
+                _scale_polygon(gap_pieces[int(gid)], mesh_scale), snap=snap
+            )
+            parts.extend(scaled_parts)
+        if not parts:
+            raise ValueError(f"GapMap[{name!r}] became empty after scaling/cleaning")
+        gap_geoms[name] = parts[0] if len(parts) == 1 else unary_union(parts)
+
     _remap_palace_physical_groups(
         output_path,
         surface_attrs={n: int(smap[n]["attr"]) for n in ordered_names},
@@ -914,6 +1131,8 @@ def mesh_gds(
         farfield_attr=int(farfield_attr),
         gap_attr=int(gap_attr),
         chip_span=chip_span,
+        gap_attrs={n: int(gmap[n]["attr"]) for n in gmap} if gmap else None,
+        gap_geoms=gap_geoms if gap_geoms else None,
     )
 
     mesh_attributes = Mesh.get_mesh_attributes(str(output_path))
@@ -971,14 +1190,22 @@ def _remap_palace_physical_groups(
     farfield_attr: int,
     gap_attr: int,
     chip_span: float,
+    gap_attrs: dict[str, int] | None = None,
+    gap_geoms: dict[str, Any] | None = None,
 ) -> None:
-    """Tag shared z=0 faces by SurfaceMap footprints; drop dangling helpers."""
+    """Tag shared z=0 faces by SurfaceMap / optional GapMap footprints."""
     import gmsh
 
     z_tol = max(1e-6, 1e-9 * float(chip_span))
     ordered_names = sorted(
         surface_attrs.keys(),
         key=lambda n: (float(surface_geoms[n].area), surface_attrs[n], n),
+    )
+    gap_attrs = gap_attrs or {}
+    gap_geoms = gap_geoms or {}
+    ordered_gap_names = sorted(
+        gap_attrs.keys(),
+        key=lambda n: (float(gap_geoms[n].area), gap_attrs[n], n),
     )
     gmsh.initialize()
     try:
@@ -1042,6 +1269,7 @@ def _remap_palace_physical_groups(
                 face_mw_names.setdefault(int(tag), []).append(name)
 
         name_to_faces: dict[str, list[int]] = {n: [] for n in ordered_names}
+        named_gap_faces: dict[str, list[int]] = {n: [] for n in ordered_gap_names}
         gap_faces: list[int] = []
         for tag in z0_shared:
             mw_metal = [
@@ -1057,8 +1285,17 @@ def _remap_palace_physical_groups(
                 label = _classify_z0_face(
                     gmsh, tag, ordered_names, surface_geoms
                 )
+            if label == "dielectric_gap" and ordered_gap_names:
+                # Optional GapMap: name a subset of leftover gap faces.
+                glabel = _classify_z0_face(
+                    gmsh, tag, ordered_gap_names, gap_geoms
+                )
+                if glabel != "dielectric_gap":
+                    label = glabel
             if label == "dielectric_gap":
                 gap_faces.append(tag)
+            elif label in named_gap_faces:
+                named_gap_faces[label].append(tag)
             else:
                 name_to_faces[label].append(tag)
 
@@ -1067,6 +1304,12 @@ def _remap_palace_physical_groups(
                 raise ValueError(
                     f"SurfaceMap[{name!r}] has no shared z=0 interface face after "
                     "classification; check polygon ids / mesh_scale."
+                )
+        for name in ordered_gap_names:
+            if not named_gap_faces[name]:
+                raise ValueError(
+                    f"GapMap[{name!r}] has no shared z=0 gap face after "
+                    "classification; check gap ids / margin_* vs inspect_gds."
                 )
         existing = list(gmsh.model.getPhysicalGroups())
         if existing:
@@ -1085,7 +1328,13 @@ def _remap_palace_physical_groups(
             faces = name_to_faces[name]
             metal_faces.update(faces)
             _add(2, faces, attr, name)
+        tagged_gap_faces: set[int] = set()
+        for name, attr in gap_attrs.items():
+            faces = named_gap_faces[name]
+            tagged_gap_faces.update(faces)
+            _add(2, faces, attr, name)
         _add(2, gap_faces, gap_attr, "dielectric_gap")
+        tagged_gap_faces.update(gap_faces)
 
         # Exterior box faces from MeshWell boundary groups (…___None).
         far_faces: list[int] = []
@@ -1093,7 +1342,7 @@ def _remap_palace_physical_groups(
             if dim != 2 or not name.endswith("___None"):
                 continue
             for tag in ents:
-                if tag in metal_faces or tag in gap_faces:
+                if tag in metal_faces or tag in tagged_gap_faces:
                     continue
                 try:
                     _xmin, _ymin, zmin, _xmax, _ymax, zmax = gmsh.model.getBoundingBox(
