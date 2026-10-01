@@ -371,20 +371,19 @@ def _geom_sort_key(p: Polygon):
     return (float(c.x), float(c.y), float(p.area))
 
 
-def enumerate_gap_pieces(
-    polys: list[Polygon],
-    margin_x: float = 0.0,
-    margin_y: float = 0.0,
-) -> list[Polygon]:
+def enumerate_gap_pieces(polys: list[Polygon]) -> list[Polygon]:
     """
-    Stable-ordered dielectric-gap pieces: ``chip_bbox − union(metals)``.
+    Stable-ordered interior dielectric-gap pieces: ``tight_bbox − metals``.
 
-    Ids match :func:`inspect_gds` (``gaps_only=True``) and :func:`mesh_gds`
-    ``gap_map``. ``margin_*`` must match the mesh call for id stability.
+    Always uses the metal bounding box with **no** domain margin — chip-margin
+    rings from ``mesh_gds(..., margin=...)`` are not nameable gaps. Ids match
+    :func:`inspect_gds` (``gaps_only=True``) and :func:`mesh_gds` ``gap_map``.
     """
     if not polys:
         return []
-    chip = _chip_bbox(polys, float(margin_x), float(margin_y))
+    # Margin-free on purpose: gap_map is for interior voids (CPW trenches, etc.),
+    # not the padded domain edge used for far_field / volume extent.
+    chip = _chip_bbox(polys, 0.0, 0.0)
     metals = unary_union(polys)
     if metals is None or getattr(metals, "is_empty", False):
         raw = chip
@@ -403,8 +402,8 @@ def validate_gap_map(
     """
     Normalize a GapMap dict: name → ``{"gaps": [gap_id, ...], "attr": int|None}``.
 
-    Gap ids come from :func:`inspect_gds` with ``gaps_only=True`` / 
-    :func:`enumerate_gap_pieces`.
+    Gap ids come from :func:`inspect_gds` with ``gaps_only=True`` /
+    :func:`enumerate_gap_pieces` (interior / margin-free).
     """
     if not isinstance(gap_map, dict):
         raise ValueError("gap_map must be a dict of name → tagging entry")
@@ -487,9 +486,6 @@ def inspect_gds(
     *,
     labeling: bool = True,
     gaps_only: bool = False,
-    margin: float = 0.0,
-    margin_x: float | None = None,
-    margin_y: float | None = None,
     zoom_to_polygons: list[int] | int | None = None,
     crop: tuple | None = None,
     show: bool = True,
@@ -501,10 +497,10 @@ def inspect_gds(
     Default (``gaps_only=False``): metal polygons labeled ``p*`` — use
     ``poly_id`` for a SurfaceMap.
 
-    Gap mode (``gaps_only=True``): only ``chip − metals`` pieces labeled
-    ``g*`` — use ``gap_id`` for an optional ``gap_map`` in :func:`mesh_gds`.
-    Pass the same ``margin`` / ``margin_x`` / ``margin_y`` as meshing so ids
-    match. Default margins are ``0`` for a readable on-chip gap view.
+    Gap mode (``gaps_only=True``): interior ``tight_bbox − metals`` pieces
+    labeled ``g*`` — use ``gap_id`` for an optional ``gap_map`` in
+    :func:`mesh_gds`. Domain ``margin_*`` is not used here (and does not
+    affect gap ids); padded chip-margin rings are not offered as nameable gaps.
     """
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
@@ -516,23 +512,17 @@ def inspect_gds(
             + (f" (cell={cell_name!r})" if cell_name else "")
         )
 
-    if margin_x == None:
-        margin_x = margin
-    if margin_y == None:
-        margin_y = margin
-
     if gaps_only:
-        pieces = enumerate_gap_pieces(polys, float(margin_x), float(margin_y))
+        pieces = enumerate_gap_pieces(polys)
         if len(pieces) == 0:
             raise ValueError(
-                "No dielectric-gap pieces found (chip − metals is empty). "
-                "Check margin_* or the metal layer."
+                "No interior dielectric-gap pieces found "
+                "(tight metal bbox − metals is empty). Check the metal layer."
             )
         id_key = "gap_id"
         label_prefix = "g"
         title = (
-            f"GDS dielectric gaps — layer {tuple(layer)} "
-            f"({len(pieces)} gaps, margin=({margin_x:g},{margin_y:g}))"
+            f"GDS dielectric gaps — layer {tuple(layer)} ({len(pieces)} gaps)"
         )
         draw_polys = pieces
         # Faint metal outlines for context only (no p* labels).
@@ -807,10 +797,11 @@ def mesh_gds(
     (default **0** — same stack as before). When set, that volume shares the
     Palace ``air`` attribute and far_field grows to the new bottom / sides.
 
-    Optional ``gap_map`` names a subset of dielectric-gap pieces (ids from
-    :func:`inspect_gds` with ``gaps_only=True``) for Palace post-processing.
+    Optional ``gap_map`` names a subset of **interior** dielectric-gap pieces
+    (ids from :func:`inspect_gds` with ``gaps_only=True``) for Palace
+    post-processing. Gap ids ignore ``margin_*`` (tight metal bbox only);
+    domain padding from ``margin`` stays unnamed ``dielectric_gap``.
     Omitted / empty keeps a single leftover ``dielectric_gap`` (prior behavior).
-    Unmapped gap pieces still mesh as dielectric and stay in ``dielectric_gap``.
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
@@ -850,8 +841,8 @@ def mesh_gds(
     if float(airbox_height_below) < 0:
         raise ValueError("airbox_height_below must be >= 0 (0 keeps prior behavior)")
 
-    # Gap pieces in GDS units (same enum as inspect_gds gaps_only=True).
-    gap_pieces = enumerate_gap_pieces(polys, float(margin_x), float(margin_y))
+    # Interior gap pieces only (margin-free; same enum as inspect gaps_only).
+    gap_pieces = enumerate_gap_pieces(polys)
     gmap = validate_gap_map(
         gap_map,
         n_gaps=len(gap_pieces),
@@ -1309,7 +1300,7 @@ def _remap_palace_physical_groups(
             if not named_gap_faces[name]:
                 raise ValueError(
                     f"GapMap[{name!r}] has no shared z=0 gap face after "
-                    "classification; check gap ids / margin_* vs inspect_gds."
+                    "classification; check gap ids vs inspect_gds(gaps_only=True)."
                 )
         existing = list(gmsh.model.getPhysicalGroups())
         if existing:

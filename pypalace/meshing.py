@@ -669,9 +669,6 @@ class Mesh:
         *,
         labeling: bool = True,
         gaps_only: bool = False,
-        margin: float = 0.0,
-        margin_x: float | None = None,
-        margin_y: float | None = None,
         zoom_to_polygons: list[int] | int | None = None,
         crop: tuple | None = None,
         show: bool = True,
@@ -681,8 +678,8 @@ class Mesh:
         Plot GDS polygons or dielectric-gap pieces with stable ids.
 
         Default: metal ``poly_id`` / ``p*`` labels for a SurfaceMap.
-        ``gaps_only=True``: gap ``gap_id`` / ``g*`` labels for an optional
-        ``gap_map`` (pass the same ``margin_*`` as :meth:`mesh_gds`).
+        ``gaps_only=True``: interior gap ``gap_id`` / ``g*`` labels for an
+        optional ``gap_map`` (tight metal bbox; ignores mesh ``margin_*``).
         """
         from .gds_mesh import inspect_gds
 
@@ -692,9 +689,6 @@ class Mesh:
             cell_name=cell_name,
             labeling=labeling,
             gaps_only=gaps_only,
-            margin=margin,
-            margin_x=margin_x,
-            margin_y=margin_y,
             zoom_to_polygons=zoom_to_polygons,
             crop=crop,
             show=show,
@@ -813,8 +807,9 @@ class Mesh:
             Integer attributes or ``"auto"``.
         gap_map : dict, optional
             Optional name → ``{"gaps": [gap_id, ...], "attr": int}``. Gap ids
-            from :meth:`inspect_gds` (``gaps_only=True``) with the same
-            ``margin_*``. Omitted → single leftover ``dielectric_gap``.
+            from :meth:`inspect_gds` (``gaps_only=True``) — interior voids
+            only; independent of ``margin_*``. Omitted → single leftover
+            ``dielectric_gap``.
         identify_arcs :
             MeshWell circle/arc recovery. Default ``False`` — enabling this on
             filleted GDS paths often causes OpenCASCADE wire failures.
