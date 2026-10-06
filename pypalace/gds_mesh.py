@@ -190,70 +190,187 @@ def _drop_covered_holes(geom, others, cover_frac: float = 0.98) -> Any:
     return parts[0] if len(parts) == 1 else MultiPolygon(parts)
 
 
-def load_gds_polygons(
-    gds_file: str | Path,
-    layer: tuple[int, int] = (1, 0),
-    cell_name: str | None = None,
-) -> list[Polygon]:
+def normalize_gds_layers(layers: Any) -> list[tuple[int, int]]:
     """
-    Load polygons from a GDS layer as a stable-ordered list.
+    Normalize GDS ``(layer, datatype)`` specs to a non-empty list of pairs.
 
-    Polygons are kept separate (not unioned), so overlapping shapes such as a
-    JJ on an island remain distinct for SurfaceMap tagging. Order is by
-    (centroid_x, centroid_y, area) so ids stay stable across reloads.
+    Accepts ``[(1, 0), (2, 0)]`` (preferred) or a single pair ``(1, 0)``.
+    Duplicates are dropped (first wins). ``None`` is not valid here — pass
+    ``layers=None`` into :func:`load_gds_polygons` / :func:`inspect_gds` /
+    :func:`mesh_gds` to mean **all layers** in the cell.
     """
+    if layers is None:
+        raise ValueError(
+            "layers=None means 'all layers' at the load/inspect/mesh API; "
+            "normalize_gds_layers requires an explicit layer list"
+        )
+
+    def _as_pair(item: Any, *, label: str) -> tuple[int, int]:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            raise ValueError(
+                f"{label} must be (layer, datatype) pairs; got {item!r}"
+            )
+        try:
+            return (int(item[0]), int(item[1]))
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"{label} entries must be integer (layer, datatype); got {item!r}"
+            ) from e
+
+    # Single pair: layers=(1, 0) → [(1, 0)]
+    if (
+        isinstance(layers, (tuple, list))
+        and len(layers) == 2
+        and not isinstance(layers[0], (tuple, list))
+        and not isinstance(layers[1], (tuple, list))
+    ):
+        return [_as_pair(layers, label="layers")]
+
+    if not isinstance(layers, (tuple, list)) or len(layers) == 0:
+        raise ValueError(
+            "layers must be a non-empty sequence of (layer, datatype) pairs, "
+            "e.g. [(1, 0)] or [(1, 0), (2, 0)], or None for all layers"
+        )
+
+    out: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for item in layers:
+        pair = _as_pair(item, label="layers")
+        if pair in seen:
+            continue
+        seen.add(pair)
+        out.append(pair)
+    if not out:
+        raise ValueError("layers must contain at least one (layer, datatype) pair")
+    return out
+
+
+def _open_gds_cell(gds_file: str | Path, cell_name: str | None = None):
+    """Read a GDS and return the selected cell (top-level if ``cell_name`` omitted)."""
     import gdstk
-    from shapely.geometry import Polygon as ShapelyPolygon
-
-    # Ensure meshwell/gdstk are importable early for a clear error message.
-    _require_meshwell()
 
     library = gdstk.read_gds(str(gds_file))
     if cell_name:
         cell = next((c for c in library.cells if c.name == cell_name), None)
         if cell is None:
             raise ValueError(f"Cell {cell_name!r} not found in {gds_file}")
-    else:
-        tops = library.top_level()
-        if not tops:
-            raise ValueError(f"No top-level cell found in {gds_file}")
-        cell = tops[0]
+        return cell
+    tops = library.top_level()
+    if not tops:
+        raise ValueError(f"No top-level cell found in {gds_file}")
+    return tops[0]
 
-    layer_num, datatype = tuple(layer)
-    polys: list[Polygon] = []
 
-    def _consume_points(points) -> None:
+def discover_gds_layers(cell) -> list[tuple[int, int]]:
+    """Return sorted unique ``(layer, datatype)`` pairs present on a gdstk cell."""
+    pairs: set[tuple[int, int]] = set()
+    for polygon in cell.polygons:
+        pairs.add((int(polygon.layer), int(polygon.datatype)))
+    for path in getattr(cell, "paths", []):
+        try:
+            path_layer = path.layers[0] if hasattr(path, "layers") else path.layer
+            path_dtype = (
+                path.datatypes[0] if hasattr(path, "datatypes") else path.datatype
+            )
+        except Exception:
+            continue
+        pairs.add((int(path_layer), int(path_dtype)))
+    return sorted(pairs)
+
+
+def resolve_gds_layers(
+    gds_file: str | Path,
+    layers: Any = None,
+    cell_name: str | None = None,
+) -> list[tuple[int, int]]:
+    """
+    Resolve ``layers`` for a GDS cell.
+
+    ``None`` → every ``(layer, datatype)`` present on the cell (sorted).
+    Otherwise → :func:`normalize_gds_layers`.
+    """
+    _require_meshwell()
+    if layers is None:
+        return discover_gds_layers(_open_gds_cell(gds_file, cell_name))
+    return normalize_gds_layers(layers)
+
+
+def load_gds_polygons(
+    gds_file: str | Path,
+    layers: Any = None,
+    cell_name: str | None = None,
+) -> list[Polygon]:
+    """
+    Load polygons from one or more GDS layers as a stable-ordered list.
+
+    All selected layers are merged onto one plane (same z=0 metal plane in
+    :func:`mesh_gds`). Polygons are kept separate (not unioned), so
+    overlapping shapes such as a JJ on an island remain distinct for
+    SurfaceMap tagging.
+
+    Parameters
+    ----------
+    layers :
+        Sequence of ``(layer, datatype)`` pairs, e.g. ``[(1, 0)]`` or
+        ``[(1, 0), (2, 0)]``. ``None`` (default) loads **all** layers
+        present in the cell. A single pair ``(1, 0)`` is also accepted.
+
+    Order is by ``(centroid_x, centroid_y, area, layer, datatype)`` so ids
+    stay stable across reloads for the same layer set.
+    """
+    from shapely.geometry import Polygon as ShapelyPolygon
+
+    # Ensure meshwell/gdstk are importable early for a clear error message.
+    _require_meshwell()
+
+    cell = _open_gds_cell(gds_file, cell_name)
+    layer_list = (
+        discover_gds_layers(cell)
+        if layers is None
+        else normalize_gds_layers(layers)
+    )
+    wanted = set(layer_list)
+
+    # (polygon, layer, datatype) — layer/datatype kept for stable sort ties.
+    tagged: list[tuple[Polygon, int, int]] = []
+
+    def _consume_points(points, layer_num: int, datatype: int) -> None:
         pts = [(float(x), float(y)) for x, y in points]
         if len(pts) < 3:
             return
         poly = ShapelyPolygon(pts)
-        polys.extend(_clean_polygon(poly))
+        for cleaned in _clean_polygon(poly):
+            tagged.append((cleaned, layer_num, datatype))
 
     for polygon in cell.polygons:
-        if polygon.layer != layer_num or polygon.datatype != datatype:
+        pair = (int(polygon.layer), int(polygon.datatype))
+        if pair not in wanted:
             continue
-        _consume_points(polygon.points)
+        _consume_points(polygon.points, pair[0], pair[1])
 
-    # Paths on the same layer (common in some GDS exports)
+    # Paths on the same layers (common in some GDS exports)
     for path in getattr(cell, "paths", []):
         try:
             path_layer = path.layers[0] if hasattr(path, "layers") else path.layer
             path_dtype = path.datatypes[0] if hasattr(path, "datatypes") else path.datatype
         except Exception:
             continue
-        if path_layer != layer_num or path_dtype != datatype:
+        pair = (int(path_layer), int(path_dtype))
+        if pair not in wanted:
             continue
         try:
             for poly in path.to_polygons():
-                _consume_points(poly.points)
+                _consume_points(poly.points, pair[0], pair[1])
         except Exception:
             continue
 
-    def sort_key(p: Polygon):
+    def sort_key(item: tuple[Polygon, int, int]):
+        p, layer_num, datatype = item
         c = p.centroid
-        return (float(c.x), float(c.y), float(p.area))
+        return (float(c.x), float(c.y), float(p.area), layer_num, datatype)
 
-    return sorted(polys, key=sort_key)
+    tagged.sort(key=sort_key)
+    return [p for p, _layer, _dtype in tagged]
 
 
 def validate_surface_map(
@@ -481,7 +598,7 @@ def validate_gap_map(
 
 def inspect_gds(
     gds_file: str | Path,
-    layer: tuple[int, int] = (1, 0),
+    layers: Any = None,
     cell_name: str | None = None,
     *,
     labeling: bool = True,
@@ -501,14 +618,29 @@ def inspect_gds(
     labeled ``g*`` — use ``gap_id`` for an optional ``gap_map`` in
     :func:`mesh_gds`. Domain ``margin_*`` is not used here (and does not
     affect gap ids); padded chip-margin rings are not offered as nameable gaps.
+
+    ``layers`` is a sequence of ``(layer, datatype)`` pairs merged onto one
+    plane, or ``None`` (default) for **all** layers in the cell. Use the same
+    value in :func:`mesh_gds`.
     """
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
 
-    polys = load_gds_polygons(gds_file, layer=layer, cell_name=cell_name)
+    layer_list = resolve_gds_layers(
+        gds_file, layers=layers, cell_name=cell_name
+    )
+    polys = load_gds_polygons(
+        gds_file, layers=layer_list, cell_name=cell_name
+    )
+    if layers is None:
+        layer_label = "all"
+    elif len(layer_list) == 1:
+        layer_label = f"{layer_list[0]}"
+    else:
+        layer_label = "[" + ", ".join(str(p) for p in layer_list) + "]"
     if len(polys) == 0:
         raise ValueError(
-            f"No polygons found on layer {tuple(layer)} in {gds_file}"
+            f"No polygons found on layers={layer_list} in {gds_file}"
             + (f" (cell={cell_name!r})" if cell_name else "")
         )
 
@@ -517,12 +649,12 @@ def inspect_gds(
         if len(pieces) == 0:
             raise ValueError(
                 "No interior dielectric-gap pieces found "
-                "(tight metal bbox − metals is empty). Check the metal layer."
+                "(tight metal bbox − metals is empty). Check layers."
             )
         id_key = "gap_id"
         label_prefix = "g"
         title = (
-            f"GDS dielectric gaps — layer {tuple(layer)} ({len(pieces)} gaps)"
+            f"GDS dielectric gaps — layers {layer_label} ({len(pieces)} gaps)"
         )
         draw_polys = pieces
         # Faint metal outlines for context only (no p* labels).
@@ -530,7 +662,7 @@ def inspect_gds(
     else:
         id_key = "poly_id"
         label_prefix = "p"
-        title = f"GDS polygons — layer {tuple(layer)} ({len(polys)} polys)"
+        title = f"GDS polygons — layers {layer_label} ({len(polys)} polys)"
         draw_polys = polys
         outline_polys = []
 
@@ -754,7 +886,7 @@ def mesh_gds(
     surface_map: dict,
     output_mesh: str | Path = "mesh_from_gds.msh",
     *,
-    metal_layer: tuple[int, int] = (1, 0),
+    layers: Any = None,
     cell_name: str | None = None,
     substrate_thickness: float = 500.0,
     airbox_height: float = 500.0,
@@ -792,6 +924,10 @@ def mesh_gds(
     faces are then classified against the SurfaceMap footprints so large
     ground planes and CPW trenches both land on the volume interface.
 
+    ``layers`` selects GDS ``(layer, datatype)`` pairs merged onto the single
+    z=0 metal plane. Default ``None`` = **all** layers in the cell. Pass the
+    same value to :func:`inspect_gds` so ``poly_id`` / ``gap_id`` match.
+
     ``airbox_height`` is the vacuum above the metal plane (default 500 µm).
     ``airbox_height_below`` adds optional vacuum under the substrate
     (default **0** — same stack as before). When set, that volume shares the
@@ -816,10 +952,15 @@ def mesh_gds(
 
     from .meshing import Mesh
 
-    polys = load_gds_polygons(gds_file, layer=metal_layer, cell_name=cell_name)
+    layer_list = resolve_gds_layers(
+        gds_file, layers=layers, cell_name=cell_name
+    )
+    polys = load_gds_polygons(
+        gds_file, layers=layer_list, cell_name=cell_name
+    )
     if len(polys) == 0:
         raise ValueError(
-            f"No polygons found on layer {tuple(metal_layer)} in {gds_file}"
+            f"No polygons found on layers={layer_list} in {gds_file}"
         )
 
     smap = assign_missing_attrs(
