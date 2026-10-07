@@ -159,15 +159,18 @@ def _clean_polygon(poly: Polygon, snap: float | None = None) -> list[Polygon]:
 
 def _drop_covered_holes(geom, others, cover_frac: float = 0.98) -> Any:
     """
-    Drop holes that are already represented by other SurfaceMap metals.
+    Drop holes already represented by other nest surfaces (metals and/or
+    named gaps).
 
-    GDS ground planes often include cutouts that nearly match island polygons.
-    Emitting both the hole wire and the island PolySurface creates coincident
-    OpenCASCADE edges that frequently fail with ``Could not fix wire``.
+    GDS ground planes often include cutouts that nearly match island polygons
+    or that are fully covered once named ``gap_map`` trenches are included.
+    Emitting both the hole wire and those PolySurfaces creates coincident
+    OpenCASCADE edges (``Could not fix wire``) or leaves grounds detached.
 
-    Only near-duplicate cutouts are removed (default ``cover_frac=0.98``).
-    A lower threshold would also delete real CPW trenches that merely contain
-    islands, which then get filled and tagged as ground.
+    Only near-duplicate / fully-covered cutouts are removed (default
+    ``cover_frac=0.98``). A lower threshold would also delete real CPW
+    trenches that merely contain islands when those trenches are not named
+    in ``gap_map``.
     """
     parts: list[Polygon] = []
     others_ok = others is not None and not getattr(others, "is_empty", True)
@@ -399,10 +402,18 @@ def validate_surface_map(
     for name, entry in surface_map.items():
         if not isinstance(name, str) or not name.strip():
             raise ValueError(f"SurfaceMap keys must be non-empty strings, got {name!r}")
-        if name in ("substrate", "air", "air_below", "far_field", "dielectric_gap"):
+        if name in (
+            "substrate",
+            "air",
+            "air_below",
+            "far_field",
+            "dielectric_gap",
+            "z0_background",
+        ):
             raise ValueError(
                 f"SurfaceMap name {name!r} is reserved "
-                "(substrate/air/far_field are auto-tagged; dielectric_gap is unused)"
+                "(substrate/air/far_field are auto-tagged; "
+                "dielectric_gap/z0_background are internal)"
             )
 
         if isinstance(entry, (list, tuple, set)):
@@ -531,7 +542,14 @@ def validate_gap_map(
 
     reserved = set(reserved_names or ())
     reserved.update(
-        {"substrate", "air", "air_below", "far_field", "dielectric_gap"}
+        {
+            "substrate",
+            "air",
+            "air_below",
+            "far_field",
+            "dielectric_gap",
+            "z0_background",
+        }
     )
     normalized: dict[str, dict] = {}
     used_gaps: dict[int, str] = {}
@@ -923,11 +941,11 @@ def mesh_gds(
     ``L0 = 1e-6``). If the GDS is in mm, pass ``mesh_scale=1000`` and keep
     the µm kwargs, or scale the kwargs to mm and use ``mesh_scale=1``.
 
-    CAD is pure MeshWell: SurfaceMap metals (CPW holes kept) and optional
-    named gap pieces are ``PolySurface`` entities nested by ``mesh_order``;
-    substrate/air are ``PolyPrism`` volumes. Shared z=0 faces are then
-    classified against those footprints so large ground planes and named
-    trenches land on the volume interface.
+    CAD is pure MeshWell: SurfaceMap metals (CPW holes kept), optional
+    named gap pieces, and an internal full-chip ``z0_background``
+    ``PolySurface`` (CAD nesting only — never a Palace tag) nested by
+    ``mesh_order``; substrate/air are ``PolyPrism`` volumes. Shared z=0
+    faces are then classified against metal / named-gap footprints.
 
     ``layers`` selects GDS ``(layer, datatype)`` pairs merged onto the single
     z=0 metal plane. Default ``None`` = **all** layers in the cell. Pass the
@@ -1088,10 +1106,11 @@ def mesh_gds(
             "volume_mesh_size=250). If the GDS is in mm, pass mesh_scale=1000."
         )
 
-    # Keep CPW holes in ground planes; only drop holes already covered by
-    # other SurfaceMap metals. Named gap_map PolySurfaces (if any) sit above
-    # metals in mesh_order. Palace tags are assigned afterward by classifying
-    # shared z=0 faces against metal / named-gap footprints.
+    # SurfaceMap metals + optional named gap_map PolySurfaces nest by area
+    # (small features first). Holes covered by other metals *or* named gaps
+    # are dropped so large grounds stay solid and lower-order gap/island
+    # surfaces can carve them. A CAD-only full-chip z0_background (highest
+    # surface mesh_order) keeps the z=0 interface intact; remap never emits it.
     name_geoms: dict[str, Any] = {}
     for name, entry in smap.items():
         selected = []
@@ -1111,9 +1130,25 @@ def mesh_gds(
             else MultiPolygon(cleaned_parts)
         )
 
-    all_union = unary_union(list(name_geoms.values()))
+    # Named gap footprints before hole cleanup / CAD (ids match inspect).
+    gap_geoms: dict[str, Any] = {}
+    for name, entry in gmap.items():
+        parts: list[Polygon] = []
+        for gid in entry["gaps"]:
+            scaled_parts = _clean_polygon(
+                _scale_polygon(gap_pieces[int(gid)], mesh_scale), snap=snap
+            )
+            parts.extend(scaled_parts)
+        if not parts:
+            raise ValueError(f"GapMap[{name!r}] became empty after scaling/cleaning")
+        gap_geoms[name] = parts[0] if len(parts) == 1 else unary_union(parts)
+
+    carver_geoms = list(name_geoms.values()) + list(gap_geoms.values())
+    all_carvers = unary_union(carver_geoms) if carver_geoms else None
     for name, geom in list(name_geoms.items()):
-        others = all_union.difference(geom) if all_union is not None else None
+        others = (
+            all_carvers.difference(geom) if all_carvers is not None else None
+        )
         cleaned_parts = []
         for part in _flatten_polygons(_drop_covered_holes(geom, others)):
             cleaned_parts.extend(_clean_polygon(part, snap=snap))
@@ -1133,6 +1168,21 @@ def mesh_gds(
     )
     if not ordered_names:
         raise ValueError("No SurfaceMap surfaces to mesh")
+    ordered_gap_names = sorted(
+        gap_geoms.keys(),
+        key=lambda n: (float(gap_geoms[n].area), gmap[n]["attr"], n),
+    )
+    # Metals + named gaps share one mesh_order ladder (area ascending) so a
+    # named trench can carve a filled ground plane the same way an island does.
+    nest_order = sorted(
+        [(n, "metal", name_geoms[n]) for n in ordered_names]
+        + [(n, "gap", gap_geoms[n]) for n in ordered_gap_names],
+        key=lambda t: (
+            float(t[2].area),
+            smap[t[0]]["attr"] if t[1] == "metal" else gmap[t[0]]["attr"],
+            t[0],
+        ),
+    )
     if fuzzy_value == None:
         fuzzy_value = float(snap)
 
@@ -1146,47 +1196,27 @@ def mesh_gds(
         )
     )
 
-    # Build named gap footprints before CAD (same ids as inspect gaps_only).
-    gap_geoms: dict[str, Any] = {}
-    for name, entry in gmap.items():
-        parts: list[Polygon] = []
-        for gid in entry["gaps"]:
-            scaled_parts = _clean_polygon(
-                _scale_polygon(gap_pieces[int(gid)], mesh_scale), snap=snap
-            )
-            parts.extend(scaled_parts)
-        if not parts:
-            raise ValueError(f"GapMap[{name!r}] became empty after scaling/cleaning")
-        gap_geoms[name] = parts[0] if len(parts) == 1 else unary_union(parts)
-
-    ordered_gap_names = sorted(
-        gap_geoms.keys(),
-        key=lambda n: (float(gap_geoms[n].area), gmap[n]["attr"], n),
-    )
-
     entities: list[Any] = []
-    for i, name in enumerate(ordered_names):
+    for i, (name, _kind, geom) in enumerate(nest_order):
         entities.append(
             PolySurface(
-                polygons=name_geoms[name],
+                polygons=geom,
                 physical_name=name,
                 mesh_order=float(i + 1),
                 identify_arcs=identify_arcs,
                 point_tolerance=snap,
             )
         )
-    # Named gaps after metals so metal nesting wins on any overlap.
-    n_metal = len(ordered_names)
-    for i, name in enumerate(ordered_gap_names):
-        entities.append(
-            PolySurface(
-                polygons=gap_geoms[name],
-                physical_name=name,
-                mesh_order=float(n_metal + i + 1),
-                identify_arcs=identify_arcs,
-                point_tolerance=snap,
-            )
+    # Full-chip CAD filler (highest surface order). Not a Palace group.
+    entities.append(
+        PolySurface(
+            polygons=chip,
+            physical_name="z0_background",
+            mesh_order=float(len(nest_order) + 1),
+            identify_arcs=identify_arcs,
+            point_tolerance=snap,
         )
+    )
     entities.append(
         PolyPrism(
             polygons=chip,
@@ -1421,23 +1451,27 @@ def _remap_palace_physical_groups(
             mw_gap = [
                 n for n in face_mw_names.get(tag, []) if n in gap_attrs
             ]
-            if len(mw_metal) == 1:
-                # Trust MeshWell when a SurfaceMap metal already owns the
-                # shared face (tiny JJs etc.).
-                label = mw_metal[0]
-            elif len(mw_gap) == 1 and not mw_metal:
-                # Trust MeshWell for named gap PolySurfaces.
+            gap_label = None
+            if ordered_gap_names:
+                gap_label = _classify_z0_face(
+                    gmsh, tag, ordered_gap_names, gap_geoms
+                )
+            if len(mw_gap) == 1 and not mw_metal:
+                # Trust MeshWell when a named gap alone owns the face.
                 label = mw_gap[0]
+            elif gap_label != None:
+                # Prefer gap footprints over metal MW ownership. After a
+                # CPW hole is filled for nesting, MeshWell may leave the
+                # trench face tagged as ground.
+                label = gap_label
+            elif len(mw_metal) == 1:
+                # Trust MeshWell for SurfaceMap metals (tiny JJs etc.).
+                label = mw_metal[0]
             else:
-                # Large ground often dangles as substrate___air — classify
-                # by metal footprint, then optional named-gap footprint.
+                # Large ground often dangles as substrate___air / background.
                 label = _classify_z0_face(
                     gmsh, tag, ordered_names, surface_geoms
                 )
-                if label == None and ordered_gap_names:
-                    label = _classify_z0_face(
-                        gmsh, tag, ordered_gap_names, gap_geoms
-                    )
             if label == None:
                 continue  # untagged volume interface
             if label in named_gap_faces:

@@ -773,7 +773,8 @@ class Mesh:
         be listed in ``surface_map`` (no auto ground plane). Optional
         ``gap_map`` entries become named z=0 ``PolySurface``s with the same
         ``custom_surface_mesh`` sizing path as metals; unmapped trenches stay
-        untagged volume interface (no catch-all gap group). The Quantum Metal
+        untagged (no catch-all gap Palace group). An internal CAD-only
+        ``z0_background`` surface keeps nesting robust. The Quantum Metal
         mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
         mm design units with ``mesh_scale=1000``.
 
