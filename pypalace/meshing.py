@@ -680,6 +680,7 @@ class Mesh:
         Default: metal ``poly_id`` / ``p*`` labels for a SurfaceMap.
         ``gaps_only=True``: interior gap ``gap_id`` / ``g*`` labels for an
         optional ``gap_map`` (tight metal bbox; ignores mesh ``margin_*``).
+        Named gaps only — unmapped trenches stay untagged.
 
         ``layers``: sequence of GDS ``(layer, datatype)`` pairs merged onto
         one plane, or ``None`` (default) for **all** layers in the cell.
@@ -768,11 +769,11 @@ class Mesh:
         """
         Mesh a GDS layout with MeshWell for Palace.
 
-        Auto-tags ``substrate``, ``air``, ``far_field``, and ``dielectric_gap``
-        (CPW voids on the metal plane; not a Palace BC). Metal surfaces must
-        be listed in ``surface_map`` (no auto ground plane). Pure MeshWell
-        CAD: ``PolySurface`` metals nested by ``mesh_order`` plus a full-chip
-        gap surface attached to the substrate/air interface. The Quantum Metal
+        Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces must
+        be listed in ``surface_map`` (no auto ground plane). Optional
+        ``gap_map`` entries become named z=0 ``PolySurface``s with the same
+        ``custom_surface_mesh`` sizing path as metals; unmapped trenches stay
+        untagged volume interface (no catch-all gap group). The Quantum Metal
         mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
         mm design units with ``mesh_scale=1000``.
 
@@ -802,7 +803,8 @@ class Mesh:
         volume_mesh_size, surface_mesh_size:
             Default bulk / metal-surface mesh targets in **µm**.
         custom_surface_mesh : dict, optional
-            Per-name surface size overrides (SurfaceMap names), in **µm**.
+            Per-name surface size overrides (SurfaceMap and GapMap names),
+            in **µm**. Same knobs as metals for named gaps.
         refinement_radius :
             Distance over which surface sizing grows to ``volume_mesh_size``
             (µm).
@@ -814,8 +816,8 @@ class Mesh:
         gap_map : dict, optional
             Optional name → ``{"gaps": [gap_id, ...], "attr": int}``. Gap ids
             from :meth:`inspect_gds` (``gaps_only=True``) — interior voids
-            only; independent of ``margin_*``. Omitted → single leftover
-            ``dielectric_gap``.
+            only; independent of ``margin_*``. Omitted / empty → metals only;
+            unmapped trenches stay untagged.
         identify_arcs :
             MeshWell circle/arc recovery. Default ``False`` — enabling this on
             filleted GDS paths often causes OpenCASCADE wire failures.

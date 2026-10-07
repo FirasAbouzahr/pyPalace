@@ -7,7 +7,8 @@ This module implements the GDS path:
 2. :func:`validate_surface_map` / SurfaceMap — name → polygon ids + attr
 3. Optional :func:`validate_gap_map` / GapMap — name → gap ids + attr
 4. :func:`mesh_gds` — MeshWell CAD/mesh with auto ``substrate``, ``air``,
-   ``far_field``, ``dielectric_gap`` (optional named gaps via ``gap_map``)
+   ``far_field``, plus SurfaceMap metals and optional named ``gap_map``
+   surfaces (no catch-all gap tag)
 
 Default units are **micrometers (µm)** with ``mesh_scale=1`` (Palace
 ``L0 = 1e-6``).
@@ -400,7 +401,8 @@ def validate_surface_map(
             raise ValueError(f"SurfaceMap keys must be non-empty strings, got {name!r}")
         if name in ("substrate", "air", "air_below", "far_field", "dielectric_gap"):
             raise ValueError(
-                f"SurfaceMap name {name!r} is reserved for auto-tagged entities"
+                f"SurfaceMap name {name!r} is reserved "
+                "(substrate/air/far_field are auto-tagged; dielectric_gap is unused)"
             )
 
         if isinstance(entry, (list, tuple, set)):
@@ -616,8 +618,9 @@ def inspect_gds(
 
     Gap mode (``gaps_only=True``): interior ``tight_bbox − metals`` pieces
     labeled ``g*`` — use ``gap_id`` for an optional ``gap_map`` in
-    :func:`mesh_gds`. Domain ``margin_*`` is not used here (and does not
-    affect gap ids); padded chip-margin rings are not offered as nameable gaps.
+    :func:`mesh_gds` (named gaps only; no catch-all leftover tag).
+    Domain ``margin_*`` is not used here (and does not affect gap ids);
+    padded chip-margin rings are not offered as nameable gaps.
 
     ``layers`` is a sequence of ``(layer, datatype)`` pairs merged onto one
     plane, or ``None`` (default) for **all** layers in the cell. Use the same
@@ -909,20 +912,22 @@ def mesh_gds(
     """
     Mesh a GDS layout with MeshWell for Palace.
 
-    Auto-tags ``substrate``, ``air``, ``far_field``, and ``dielectric_gap``
-    (CPW voids / chip margin on the metal plane — not a Palace BC). Metal
-    surfaces come only from ``surface_map`` (no auto ground plane).
+    Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces come
+    only from ``surface_map`` (no auto ground plane). Optional ``gap_map``
+    entries become named z=0 surfaces (tag + mesh size); anything not in
+    ``gap_map`` stays the plain substrate/air interface (no catch-all gap
+    physical group).
 
     **Units are micrometers (µm)** by default: geometry kwargs and GDS
     coordinates are treated as µm with ``mesh_scale=1`` (Palace
     ``L0 = 1e-6``). If the GDS is in mm, pass ``mesh_scale=1000`` and keep
     the µm kwargs, or scale the kwargs to mm and use ``mesh_scale=1``.
 
-    CAD is pure MeshWell: SurfaceMap metals (CPW holes kept) and a
-    full-chip ``dielectric_gap`` are ``PolySurface`` entities nested by
-    ``mesh_order``; substrate/air are ``PolyPrism`` volumes. Shared z=0
-    faces are then classified against the SurfaceMap footprints so large
-    ground planes and CPW trenches both land on the volume interface.
+    CAD is pure MeshWell: SurfaceMap metals (CPW holes kept) and optional
+    named gap pieces are ``PolySurface`` entities nested by ``mesh_order``;
+    substrate/air are ``PolyPrism`` volumes. Shared z=0 faces are then
+    classified against those footprints so large ground planes and named
+    trenches land on the volume interface.
 
     ``layers`` selects GDS ``(layer, datatype)`` pairs merged onto the single
     z=0 metal plane. Default ``None`` = **all** layers in the cell. Pass the
@@ -933,11 +938,11 @@ def mesh_gds(
     (default **0** — same stack as before). When set, that volume shares the
     Palace ``air`` attribute and far_field grows to the new bottom / sides.
 
-    Optional ``gap_map`` names a subset of **interior** dielectric-gap pieces
-    (ids from :func:`inspect_gds` with ``gaps_only=True``) for Palace
-    post-processing. Gap ids ignore ``margin_*`` (tight metal bbox only);
-    domain padding from ``margin`` stays unnamed ``dielectric_gap``.
-    Omitted / empty keeps a single leftover ``dielectric_gap`` (prior behavior).
+    Optional ``gap_map`` names **interior** gap pieces (ids from
+    :func:`inspect_gds` with ``gaps_only=True``) for Palace post-processing
+    and per-name ``custom_surface_mesh`` sizing (same dict / knobs as metals).
+    Gap ids ignore ``margin_*`` (tight metal bbox only). Omitted / empty
+    → metals only; unmapped trenches stay untagged volume interface.
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
@@ -990,7 +995,7 @@ def mesh_gds(
         reserved_names=set(smap.keys()),
     )
 
-    # Auto volume / far_field / default-gap attrs after user surface attrs
+    # Auto volume / far_field attrs after user surface attrs.
     max_user = max(v["attr"] for v in smap.values())
     if substrate_attr == "auto":
         substrate_attr = max_user + 1
@@ -1004,13 +1009,11 @@ def mesh_gds(
         farfield_attr = int(air_attr) + 1
     else:
         farfield_attr = int(farfield_attr)
-    gap_attr = int(farfield_attr) + 1
 
     reserved = {
         "substrate": substrate_attr,
         "air": air_attr,
         "far_field": farfield_attr,
-        "dielectric_gap": gap_attr,
     }
     for name, entry in smap.items():
         for rname, rattr in reserved.items():
@@ -1019,7 +1022,7 @@ def mesh_gds(
                     f"SurfaceMap[{name!r}] attr={rattr} collides with auto-tagged {rname!r}"
                 )
 
-    # Named gap attrs: keep explicit ones, auto-fill after dielectric_gap.
+    # Named gap attrs: keep explicit ones, auto-fill after far_field.
     used_attrs = {int(v["attr"]) for v in smap.values()} | set(reserved.values())
     for name, entry in gmap.items():
         attr = entry["attr"]
@@ -1029,7 +1032,7 @@ def mesh_gds(
                     f"GapMap[{name!r}] attr={attr} collides with an existing attribute"
                 )
             used_attrs.add(int(attr))
-    gmap = assign_missing_attrs(gmap, start=gap_attr + 1)
+    gmap = assign_missing_attrs(gmap, start=int(farfield_attr) + 1)
     for name, entry in gmap.items():
         if int(entry["attr"]) in reserved.values():
             raise ValueError(
@@ -1086,9 +1089,9 @@ def mesh_gds(
         )
 
     # Keep CPW holes in ground planes; only drop holes already covered by
-    # other SurfaceMap metals. Full-chip dielectric_gap (highest surface
-    # mesh_order) fragments z=0; Palace tags are assigned afterward by
-    # classifying shared interface faces against these footprints.
+    # other SurfaceMap metals. Named gap_map PolySurfaces (if any) sit above
+    # metals in mesh_order. Palace tags are assigned afterward by classifying
+    # shared z=0 faces against metal / named-gap footprints.
     name_geoms: dict[str, Any] = {}
     for name, entry in smap.items():
         selected = []
@@ -1143,6 +1146,24 @@ def mesh_gds(
         )
     )
 
+    # Build named gap footprints before CAD (same ids as inspect gaps_only).
+    gap_geoms: dict[str, Any] = {}
+    for name, entry in gmap.items():
+        parts: list[Polygon] = []
+        for gid in entry["gaps"]:
+            scaled_parts = _clean_polygon(
+                _scale_polygon(gap_pieces[int(gid)], mesh_scale), snap=snap
+            )
+            parts.extend(scaled_parts)
+        if not parts:
+            raise ValueError(f"GapMap[{name!r}] became empty after scaling/cleaning")
+        gap_geoms[name] = parts[0] if len(parts) == 1 else unary_union(parts)
+
+    ordered_gap_names = sorted(
+        gap_geoms.keys(),
+        key=lambda n: (float(gap_geoms[n].area), gmap[n]["attr"], n),
+    )
+
     entities: list[Any] = []
     for i, name in enumerate(ordered_names):
         entities.append(
@@ -1154,16 +1175,18 @@ def mesh_gds(
                 point_tolerance=snap,
             )
         )
-    # Full chip at the highest surface order — MeshWell carves metals out.
-    entities.append(
-        PolySurface(
-            polygons=chip,
-            physical_name="dielectric_gap",
-            mesh_order=float(len(ordered_names) + 1),
-            identify_arcs=identify_arcs,
-            point_tolerance=snap,
+    # Named gaps after metals so metal nesting wins on any overlap.
+    n_metal = len(ordered_names)
+    for i, name in enumerate(ordered_gap_names):
+        entities.append(
+            PolySurface(
+                polygons=gap_geoms[name],
+                physical_name=name,
+                mesh_order=float(n_metal + i + 1),
+                identify_arcs=identify_arcs,
+                point_tolerance=snap,
+            )
         )
-    )
     entities.append(
         PolyPrism(
             polygons=chip,
@@ -1198,8 +1221,9 @@ def mesh_gds(
             )
         )
 
+    # Same sizing path for SurfaceMap metals and named gap_map surfaces.
     resolution_specs: dict[str, list] = {}
-    for name in ordered_names:
+    for name in list(ordered_names) + list(ordered_gap_names):
         size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
         specs = [ConstantInField(apply_to="surfaces", resolution=size)]
         if h_refine > 0 and size < h_vol:
@@ -1213,9 +1237,6 @@ def mesh_gds(
                 )
             )
         resolution_specs[name] = specs
-    resolution_specs["dielectric_gap"] = [
-        ConstantInField(apply_to="surfaces", resolution=h_surf)
-    ]
 
     try:
         generate_mesh(
@@ -1241,19 +1262,6 @@ def mesh_gds(
             "mismatch. Check SurfaceMap polygons via inspect_gds(...)."
         ) from e
 
-    # Scale gap pieces into mesh units for z=0 classification (ids match inspect).
-    gap_geoms: dict[str, Any] = {}
-    for name, entry in gmap.items():
-        parts: list[Polygon] = []
-        for gid in entry["gaps"]:
-            scaled_parts = _clean_polygon(
-                _scale_polygon(gap_pieces[int(gid)], mesh_scale), snap=snap
-            )
-            parts.extend(scaled_parts)
-        if not parts:
-            raise ValueError(f"GapMap[{name!r}] became empty after scaling/cleaning")
-        gap_geoms[name] = parts[0] if len(parts) == 1 else unary_union(parts)
-
     _remap_palace_physical_groups(
         output_path,
         surface_attrs={n: int(smap[n]["attr"]) for n in ordered_names},
@@ -1261,9 +1269,8 @@ def mesh_gds(
         substrate_attr=int(substrate_attr),
         air_attr=int(air_attr),
         farfield_attr=int(farfield_attr),
-        gap_attr=int(gap_attr),
         chip_span=chip_span,
-        gap_attrs={n: int(gmap[n]["attr"]) for n in gmap} if gmap else None,
+        gap_attrs={n: int(gmap[n]["attr"]) for n in ordered_gap_names} if ordered_gap_names else None,
         gap_geoms=gap_geoms if gap_geoms else None,
     )
 
@@ -1276,24 +1283,27 @@ def _classify_z0_face(
     face_tag: int,
     ordered_names: list[str],
     surface_geoms: dict[str, Any],
-) -> str:
-    """Vote a shared z=0 face into a SurfaceMap name or ``dielectric_gap``."""
+) -> str | None:
+    """Vote a shared z=0 face into a named footprint, or ``None`` if untagged."""
     from shapely.geometry import Point
+
+    if not ordered_names:
+        return None
 
     try:
         _tags, coords, _p = gmsh.model.mesh.getNodes(
             2, int(face_tag), includeBoundary=True
         )
     except Exception:
-        return "dielectric_gap"
+        return None
     if coords is None or len(coords) < 3:
-        return "dielectric_gap"
+        return None
     pts = np.asarray(coords, dtype=float).reshape(-1, 3)[:, :2]
     if len(pts) > 250:
         pts = pts[:: max(1, len(pts) // 250)]
 
     votes = {name: 0 for name in ordered_names}
-    gap_votes = 0
+    miss_votes = 0
     for x, y in pts:
         p = Point(float(x), float(y))
         hit = None
@@ -1303,14 +1313,14 @@ def _classify_z0_face(
                 hit = name
                 break
         if hit == None:
-            gap_votes += 1
+            miss_votes += 1
         else:
             votes[hit] += 1
 
     best_name = max(ordered_names, key=lambda n: votes[n])
-    if votes[best_name] > gap_votes and votes[best_name] > 0:
+    if votes[best_name] > miss_votes and votes[best_name] > 0:
         return best_name
-    return "dielectric_gap"
+    return None
 
 
 def _remap_palace_physical_groups(
@@ -1320,12 +1330,14 @@ def _remap_palace_physical_groups(
     substrate_attr: int,
     air_attr: int,
     farfield_attr: int,
-    gap_attr: int,
     chip_span: float,
     gap_attrs: dict[str, int] | None = None,
     gap_geoms: dict[str, Any] | None = None,
 ) -> None:
-    """Tag shared z=0 faces by SurfaceMap / optional GapMap footprints."""
+    """Tag shared z=0 faces by SurfaceMap / optional GapMap footprints.
+
+    Unmapped z=0 interface faces stay untagged (no catch-all gap group).
+    """
     import gmsh
 
     z_tol = max(1e-6, 1e-9 * float(chip_span))
@@ -1402,33 +1414,35 @@ def _remap_palace_physical_groups(
 
         name_to_faces: dict[str, list[int]] = {n: [] for n in ordered_names}
         named_gap_faces: dict[str, list[int]] = {n: [] for n in ordered_gap_names}
-        gap_faces: list[int] = []
         for tag in z0_shared:
             mw_metal = [
                 n for n in face_mw_names.get(tag, []) if n in surface_attrs
+            ]
+            mw_gap = [
+                n for n in face_mw_names.get(tag, []) if n in gap_attrs
             ]
             if len(mw_metal) == 1:
                 # Trust MeshWell when a SurfaceMap metal already owns the
                 # shared face (tiny JJs etc.).
                 label = mw_metal[0]
+            elif len(mw_gap) == 1 and not mw_metal:
+                # Trust MeshWell for named gap PolySurfaces.
+                label = mw_gap[0]
             else:
-                # Large ground often dangles; its volume face is left as
-                # dielectric_gap / substrate___air — classify by footprint.
+                # Large ground often dangles as substrate___air — classify
+                # by metal footprint, then optional named-gap footprint.
                 label = _classify_z0_face(
                     gmsh, tag, ordered_names, surface_geoms
                 )
-            if label == "dielectric_gap" and ordered_gap_names:
-                # Optional GapMap: name a subset of leftover gap faces.
-                glabel = _classify_z0_face(
-                    gmsh, tag, ordered_gap_names, gap_geoms
-                )
-                if glabel != "dielectric_gap":
-                    label = glabel
-            if label == "dielectric_gap":
-                gap_faces.append(tag)
-            elif label in named_gap_faces:
+                if label == None and ordered_gap_names:
+                    label = _classify_z0_face(
+                        gmsh, tag, ordered_gap_names, gap_geoms
+                    )
+            if label == None:
+                continue  # untagged volume interface
+            if label in named_gap_faces:
                 named_gap_faces[label].append(tag)
-            else:
+            elif label in name_to_faces:
                 name_to_faces[label].append(tag)
 
         for name in ordered_names:
@@ -1465,10 +1479,10 @@ def _remap_palace_physical_groups(
             faces = named_gap_faces[name]
             tagged_gap_faces.update(faces)
             _add(2, faces, attr, name)
-        _add(2, gap_faces, gap_attr, "dielectric_gap")
-        tagged_gap_faces.update(gap_faces)
 
         # Exterior box faces from MeshWell boundary groups (…___None).
+        # z=0 interface faces (metals, named gaps, untagged trenches) are
+        # skipped via the z≈0 bbox filter below.
         far_faces: list[int] = []
         for name, (dim, ents) in by_name.items():
             if dim != 2 or not name.endswith("___None"):
