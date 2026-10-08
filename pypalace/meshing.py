@@ -773,10 +773,12 @@ class Mesh:
         be listed in ``surface_map`` (no auto ground plane). Optional
         ``gap_map`` entries become named z=0 ``PolySurface``s with the same
         ``custom_surface_mesh`` sizing path as metals; unmapped trenches stay
-        untagged (no catch-all gap Palace group). An internal CAD-only
-        ``z0_background`` surface keeps nesting robust. The Quantum Metal
-        mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
-        mm design units with ``mesh_scale=1000``.
+        untagged (no catch-all gap Palace group). Metals are nested per
+        polygon piece with holes filled for CAD (remap still uses the real
+        footprints); interior gaps carve the nest so grounds stay attached.
+        An internal CAD-only ``z0_background`` surface keeps nesting robust.
+        The Quantum Metal mesher (:meth:`mesh_Quantum_Metal_design`) is
+        unchanged and still uses mm design units with ``mesh_scale=1000``.
 
         Parameters
         ----------
