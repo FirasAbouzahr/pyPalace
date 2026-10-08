@@ -1217,6 +1217,36 @@ def mesh_gds(
         for part in scaled_parts:
             gap_pieces_cad.append((cad_name, part))
 
+    # Subtract other SurfaceMap footprints (original, holes kept) and all gap
+    # pieces from filled metal CAD. Filling ground holes otherwise re-emits
+    # island/pad regions as ground, and a dangling gap PolySurface leaves
+    # trenches owned by solid ground so ConstantInField never sizes them.
+    if gap_pieces_cad or len(name_geoms) > 1:
+        gap_union = (
+            unary_union([g for _, g in gap_pieces_cad])
+            if gap_pieces_cad
+            else None
+        )
+        trimmed: list[tuple[str, Polygon]] = []
+        for name, geom in metal_pieces_cad:
+            diff: Any = geom
+            others = [name_geoms[n] for n in name_geoms if n != name]
+            if others:
+                diff = diff.difference(unary_union(others))
+            if gap_union is not None and not getattr(gap_union, "is_empty", True):
+                diff = diff.difference(gap_union)
+            parts: list[Polygon] = []
+            for part in _flatten_polygons(diff):
+                parts.extend(_clean_polygon(part, snap=snap))
+            if not parts:
+                raise ValueError(
+                    f"SurfaceMap[{name!r}] disappeared after subtracting other "
+                    "metals/gaps for CAD; check SurfaceMap / gap ids."
+                )
+            for part in parts:
+                trimmed.append((name, part))
+        metal_pieces_cad = trimmed
+
     ordered_names = sorted(
         name_geoms.keys(),
         key=lambda n: (float(name_geoms[n].area), smap[n]["attr"], n),
@@ -1366,6 +1396,58 @@ def mesh_gds(
     return mesh_attributes.sort_values("ID")
 
 
+def _face_sample_xy(gmsh, face_tag: int) -> np.ndarray | None:
+    """XY samples for a face: triangle centroids first, else mesh nodes.
+
+    Boundary nodes lie on shared metal/gap edges and bias footprint votes;
+    element centroids sit in the face interior and classify trenches correctly.
+    """
+    try:
+        etypes, _, enodes = gmsh.model.mesh.getElements(2, int(face_tag))
+        all_tags, all_coords, _ = gmsh.model.mesh.getNodes()
+    except Exception:
+        return None
+    id_to_xy = {
+        int(t): (float(all_coords[3 * i]), float(all_coords[3 * i + 1]))
+        for i, t in enumerate(all_tags)
+    }
+    cents: list[list[float]] = []
+    for typ, nod in zip(etypes, enodes):
+        if int(typ) != 2:
+            continue
+        nod = list(nod)
+        for i in range(0, len(nod), 3):
+            try:
+                p0 = id_to_xy[int(nod[i])]
+                p1 = id_to_xy[int(nod[i + 1])]
+                p2 = id_to_xy[int(nod[i + 2])]
+            except KeyError:
+                continue
+            cents.append(
+                [
+                    (p0[0] + p1[0] + p2[0]) / 3.0,
+                    (p0[1] + p1[1] + p2[1]) / 3.0,
+                ]
+            )
+    if cents:
+        pts = np.asarray(cents, dtype=float)
+        if len(pts) > 250:
+            pts = pts[:: max(1, len(pts) // 250)]
+        return pts
+    try:
+        _tags, coords, _p = gmsh.model.mesh.getNodes(
+            2, int(face_tag), includeBoundary=True
+        )
+    except Exception:
+        return None
+    if coords is None or len(coords) < 3:
+        return None
+    pts = np.asarray(coords, dtype=float).reshape(-1, 3)[:, :2]
+    if len(pts) > 250:
+        pts = pts[:: max(1, len(pts) // 250)]
+    return pts
+
+
 def _classify_z0_face(
     gmsh,
     face_tag: int,
@@ -1378,17 +1460,9 @@ def _classify_z0_face(
     if not ordered_names:
         return None
 
-    try:
-        _tags, coords, _p = gmsh.model.mesh.getNodes(
-            2, int(face_tag), includeBoundary=True
-        )
-    except Exception:
+    pts = _face_sample_xy(gmsh, face_tag)
+    if pts is None or len(pts) == 0:
         return None
-    if coords is None or len(coords) < 3:
-        return None
-    pts = np.asarray(coords, dtype=float).reshape(-1, 3)[:, :2]
-    if len(pts) > 250:
-        pts = pts[:: max(1, len(pts) // 250)]
 
     votes = {name: 0 for name in ordered_names}
     miss_votes = 0
@@ -1518,21 +1592,28 @@ def _remap_palace_physical_groups(
             mw_gap = [
                 n for n in face_mw_names.get(tag, []) if n in gap_attrs
             ]
-            # Metals win over gaps on the same face (island inside a trench
-            # bbox must stay metal). Gaps only claim leftover faces.
-            if len(mw_metal) == 1:
+            # Footprint classify first (triangle centroids). Blind MeshWell
+            # metal trust is wrong when a named-gap PolySurface dangles and
+            # the filled ground still owns the trench interface face.
+            metal_label = _classify_z0_face(
+                gmsh, tag, ordered_names, surface_geoms
+            )
+            gap_label = (
+                _classify_z0_face(gmsh, tag, ordered_gap_names, gap_geoms)
+                if ordered_gap_names
+                else None
+            )
+            if metal_label != None:
+                # Islands / pads win over gap footprints on the same face.
+                label = metal_label
+            elif gap_label != None:
+                label = gap_label
+            elif len(mw_metal) == 1:
                 label = mw_metal[0]
+            elif len(mw_gap) == 1:
+                label = mw_gap[0]
             else:
-                label = _classify_z0_face(
-                    gmsh, tag, ordered_names, surface_geoms
-                )
-            if label == None:
-                if len(mw_gap) == 1:
-                    label = mw_gap[0]
-                elif ordered_gap_names:
-                    label = _classify_z0_face(
-                        gmsh, tag, ordered_gap_names, gap_geoms
-                    )
+                label = None
             if label == None:
                 continue  # untagged volume interface
             if label in named_gap_faces:
