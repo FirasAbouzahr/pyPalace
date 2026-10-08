@@ -902,6 +902,20 @@ def _scale_polygon(poly: Polygon, mesh_scale: float) -> Polygon:
     return shapely_scale(poly, xfact=mesh_scale, yfact=mesh_scale, origin=(0, 0))
 
 
+# Physical defaults for mesh_gds, in micrometers (Palace mesh units when
+# L0=1e-6). When the corresponding kwarg is omitted (None), it is filled as
+# default_um / mesh_scale so GDS-native kwargs still satisfy
+# value * mesh_scale ≈ default_um in the mesh file.
+_MESH_GDS_DEFAULTS_UM: dict[str, float] = {
+    "substrate_thickness": 500.0,
+    "airbox_height": 500.0,
+    "margin": 500.0,
+    "volume_mesh_size": 250.0,
+    "surface_mesh_size": 20.0,
+    "refinement_radius": 150.0,
+}
+
+
 def mesh_gds(
     gds_file: str | Path,
     surface_map: dict,
@@ -909,16 +923,16 @@ def mesh_gds(
     *,
     layers: Any = None,
     cell_name: str | None = None,
-    substrate_thickness: float = 500.0,
-    airbox_height: float = 500.0,
+    substrate_thickness: float | None = None,
+    airbox_height: float | None = None,
     airbox_height_below: float = 0.0,
-    margin: float = 500.0,
+    margin: float | None = None,
     margin_x: float | None = None,
     margin_y: float | None = None,
-    volume_mesh_size: float = 250.0,
-    surface_mesh_size: float = 20.0,
+    volume_mesh_size: float | None = None,
+    surface_mesh_size: float | None = None,
     custom_surface_mesh: dict[str, float] | None = None,
-    refinement_radius: float = 150.0,
+    refinement_radius: float | None = None,
     mesh_scale: float = 1.0,
     farfield_attr: int | str = "auto",
     substrate_attr: int | str = "auto",
@@ -936,10 +950,17 @@ def mesh_gds(
     ``gap_map`` stays the plain substrate/air interface (no catch-all gap
     physical group).
 
-    **Units are micrometers (µm)** by default: geometry kwargs and GDS
-    coordinates are treated as µm with ``mesh_scale=1`` (Palace
-    ``L0 = 1e-6``). If the GDS is in mm, pass ``mesh_scale=1000`` and keep
-    the µm kwargs, or scale the kwargs to mm and use ``mesh_scale=1``.
+    **Units:** GDS coordinates and any *explicit* length kwargs are in
+    GDS-native units; they are multiplied by ``mesh_scale`` into the mesh.
+    With ``mesh_scale=1`` that means µm and Palace ``L0 = 1e-6``. For an nm
+    GDS use ``mesh_scale=0.001`` (nm→µm in the mesh) and keep ``L0 = 1e-6``.
+
+    Omitted size/geometry defaults (``surface_mesh_size``,
+    ``volume_mesh_size``, ``refinement_radius``, ``substrate_thickness``,
+    ``airbox_height``, ``margin``) are physical **µm** targets filled as
+    ``default_um / mesh_scale`` so ``value * mesh_scale`` stays ~µm in the
+    mesh. ``airbox_height_below`` still defaults to ``0`` (off). Explicit
+    kwargs are never auto-scaled — pass them in GDS-native units.
 
     CAD is pure MeshWell: SurfaceMap metals (CPW holes kept), optional
     named gap pieces, and an internal full-chip ``z0_background``
@@ -951,10 +972,12 @@ def mesh_gds(
     z=0 metal plane. Default ``None`` = **all** layers in the cell. Pass the
     same value to :func:`inspect_gds` so ``poly_id`` / ``gap_id`` match.
 
-    ``airbox_height`` is the vacuum above the metal plane (default 500 µm).
+    ``airbox_height`` is the vacuum above the metal plane (default 500 µm
+    physical, auto-scaled by ``mesh_scale`` when omitted).
     ``airbox_height_below`` adds optional vacuum under the substrate
-    (default **0** — same stack as before). When set, that volume shares the
-    Palace ``air`` attribute and far_field grows to the new bottom / sides.
+    (default **0** — same stack as before; not auto-scaled). When set, that
+    volume shares the Palace ``air`` attribute and far_field grows to the
+    new bottom / sides.
 
     Optional ``gap_map`` names **interior** gap pieces (ids from
     :func:`inspect_gds` with ``gaps_only=True``) for Palace post-processing
@@ -990,12 +1013,32 @@ def mesh_gds(
         validate_surface_map(surface_map, n_polygons=len(polys))
     )
 
+    if float(mesh_scale) == 0.0:
+        raise ValueError("mesh_scale must be non-zero")
+
+    def _default_um(name: str, value: float | None) -> float:
+        if value == None:
+            return float(_MESH_GDS_DEFAULTS_UM[name]) / float(mesh_scale)
+        return float(value)
+
+    substrate_thickness = _default_um("substrate_thickness", substrate_thickness)
+    airbox_height = _default_um("airbox_height", airbox_height)
+    margin = _default_um("margin", margin)
+    volume_mesh_size = _default_um("volume_mesh_size", volume_mesh_size)
+    surface_mesh_size = _default_um("surface_mesh_size", surface_mesh_size)
+    refinement_radius = _default_um("refinement_radius", refinement_radius)
+
     if margin_x == None:
         margin_x = margin
     if margin_y == None:
         margin_y = margin
     if custom_surface_mesh == None:
         custom_surface_mesh = {}
+    else:
+        # Explicit custom sizes are GDS-native, same as other length kwargs.
+        custom_surface_mesh = {
+            str(k): float(v) for k, v in custom_surface_mesh.items()
+        }
     if gap_map == None:
         gap_map = {}
     if float(substrate_thickness) <= 0:
