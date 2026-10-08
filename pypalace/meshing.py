@@ -680,6 +680,7 @@ class Mesh:
         Default: metal ``poly_id`` / ``p*`` labels for a SurfaceMap.
         ``gaps_only=True``: interior gap ``gap_id`` / ``g*`` labels for an
         optional ``gap_map`` (tight metal bbox; ignores mesh ``margin_*``).
+        Named gaps only — unmapped trenches stay untagged.
 
         ``layers``: sequence of GDS ``(layer, datatype)`` pairs merged onto
         one plane, or ``None`` (default) for **all** layers in the cell.
@@ -747,16 +748,16 @@ class Mesh:
         *,
         layers=None,
         cell_name: str | None = None,
-        substrate_thickness: float = 500.0,
-        airbox_height: float = 500.0,
+        substrate_thickness: float | None = None,
+        airbox_height: float | None = None,
         airbox_height_below: float = 0.0,
-        margin: float = 500.0,
+        margin: float | None = None,
         margin_x: float | None = None,
         margin_y: float | None = None,
-        volume_mesh_size: float = 250.0,
-        surface_mesh_size: float = 20.0,
+        volume_mesh_size: float | None = None,
+        surface_mesh_size: float | None = None,
         custom_surface_mesh: dict[str, float] | None = None,
-        refinement_radius: float = 150.0,
+        refinement_radius: float | None = None,
         mesh_scale: float = 1.0,
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
@@ -768,11 +769,12 @@ class Mesh:
         """
         Mesh a GDS layout with MeshWell for Palace.
 
-        Auto-tags ``substrate``, ``air``, ``far_field``, and ``dielectric_gap``
-        (CPW voids on the metal plane; not a Palace BC). Metal surfaces must
-        be listed in ``surface_map`` (no auto ground plane). Pure MeshWell
-        CAD: ``PolySurface`` metals nested by ``mesh_order`` plus a full-chip
-        gap surface attached to the substrate/air interface. The Quantum Metal
+        Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces must
+        be listed in ``surface_map`` (no auto ground plane). Optional
+        ``gap_map`` entries become named z=0 ``PolySurface``s with the same
+        ``custom_surface_mesh`` sizing path as metals; unmapped trenches stay
+        untagged (no catch-all gap Palace group). An internal CAD-only
+        ``z0_background`` surface keeps nesting robust. The Quantum Metal
         mesher (:meth:`mesh_Quantum_Metal_design`) is unchanged and still uses
         mm design units with ``mesh_scale=1000``.
 
@@ -793,29 +795,38 @@ class Mesh:
         cell_name : str, optional
             GDS cell to read; default is the top cell.
         substrate_thickness, airbox_height, margin, margin_x, margin_y:
-            Geometry lengths in **µm** (before ``mesh_scale``).
-            ``airbox_height`` is vacuum above the metal plane (default 500).
+            Geometry lengths in **GDS-native units** when given explicitly
+            (multiplied by ``mesh_scale``). Omitted values default to
+            physical µm targets (500 µm substrate/airbox/margin) via
+            ``default_um / mesh_scale``. ``airbox_height`` is vacuum above
+            the metal plane.
         airbox_height_below :
-            Optional vacuum under the substrate in **µm**. Default ``0``
-            (unchanged stack). When > 0, tagged as Palace ``air`` and
-            far_field expands to the new bottom / sides.
+            Optional vacuum under the substrate in GDS-native units.
+            Default ``0`` (unchanged stack; not auto-scaled). When > 0,
+            tagged as Palace ``air`` and far_field expands to the new
+            bottom / sides.
         volume_mesh_size, surface_mesh_size:
-            Default bulk / metal-surface mesh targets in **µm**.
+            Bulk / metal-surface mesh targets. Explicit → GDS-native;
+            omitted → 250 µm / 20 µm physical via ``/ mesh_scale``.
         custom_surface_mesh : dict, optional
-            Per-name surface size overrides (SurfaceMap names), in **µm**.
+            Per-name surface size overrides (SurfaceMap and GapMap names)
+            in **GDS-native units** (same as explicit size kwargs).
         refinement_radius :
-            Distance over which surface sizing grows to ``volume_mesh_size``
-            (µm).
+            Distance over which surface sizing grows to ``volume_mesh_size``.
+            Explicit → GDS-native; omitted → 150 µm physical via
+            ``/ mesh_scale``.
         mesh_scale :
-            Multiplies coordinates before meshing. Default ``1`` for µm GDS
-            (Palace ``L0 = 1e-6``). Use ``1000`` only if the GDS is in mm.
+            Multiplies GDS coordinates and length kwargs into mesh units.
+            Default ``1`` for µm GDS (Palace ``L0 = 1e-6``). Use
+            ``0.001`` for nm GDS (mesh stays in µm, keep ``L0 = 1e-6``).
+            Use ``1000`` only if the GDS is in mm.
         farfield_attr, substrate_attr, air_attr :
             Integer attributes or ``"auto"``.
         gap_map : dict, optional
             Optional name → ``{"gaps": [gap_id, ...], "attr": int}``. Gap ids
             from :meth:`inspect_gds` (``gaps_only=True``) — interior voids
-            only; independent of ``margin_*``. Omitted → single leftover
-            ``dielectric_gap``.
+            only; independent of ``margin_*``. Omitted / empty → metals only;
+            unmapped trenches stay untagged.
         identify_arcs :
             MeshWell circle/arc recovery. Default ``False`` — enabling this on
             filleted GDS paths often causes OpenCASCADE wire failures.
