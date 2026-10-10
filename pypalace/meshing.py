@@ -132,6 +132,126 @@ class Mesh:
             
         return pd.DataFrame(attributes_dict,index = None)
 
+    # MFEM Geometry::PerfGeomToGeomJac for TETRAHEDRON (JacToPerfJac left-multiply).
+    # Built as inv(J) where J maps the MFEM reference tet
+    # {(0,0,0),(1,0,0),(0,1,0),(0,0,1)} onto MFEM's "perfect" equilateral tet.
+    # Matches palace/MFEM mesh.PrintInfo() kappa for linear tets.
+    _MFEM_TET_PERF_TO_GEOM = np.array(
+        [
+            [1.0, -1.0 / np.sqrt(3.0), -1.0 / np.sqrt(6.0)],
+            [0.0, 2.0 / np.sqrt(3.0), -1.0 / np.sqrt(6.0)],
+            [0.0, 0.0, np.sqrt(1.5)],
+        ],
+        dtype=float,
+    )
+
+    @staticmethod
+    def _tet_kappa_h(verts: np.ndarray) -> tuple[float, float]:
+        """MFEM-matching shape regularity κ and size h for one linear tet.
+
+        ``verts`` is (4, 3) in mesh corner order. Uses JacToPerfJac then
+        ``κ = σ_max / σ_min`` and ``h = |det J_perf|^{1/3}`` — same as
+        ``mfem::Mesh::GetElementJacobian`` / Palace ``PrintMeshInfo``.
+        """
+        v = np.asarray(verts, dtype=float).reshape(4, 3)
+        jac = (v[1:] - v[0]).T  # ref → phys (columns)
+        jac_perf = jac @ Mesh._MFEM_TET_PERF_TO_GEOM
+        singular = np.linalg.svd(jac_perf, compute_uv=False)
+        s_min = float(singular[-1])
+        if s_min <= 0.0 or not np.isfinite(s_min):
+            return float("inf"), 0.0
+        kappa = float(singular[0] / s_min)
+        det = float(np.linalg.det(jac_perf))
+        h = float(abs(det) ** (1.0 / 3.0)) if det != 0.0 else 0.0
+        return kappa, h
+
+    @staticmethod
+    def mesh_quality(
+        filename: str | Path,
+        *,
+        return_elements: bool = False,
+        top_n: int = 10,
+    ):
+        """
+        Preflight mesh shape regularity (Palace / MFEM ``kappa``) without a solve.
+
+        Reads volume tets from ``.msh`` or ``.bdf`` and reports the same
+        element anisotropy Palace prints at load (``kappa_min`` / ``kappa_max``
+        in the log): for each linear tet, JacToPerfJac then
+        ``κ = σ_max(J)/σ_min(J)`` and ``h = |det J|^{1/3}``.
+
+        Intended for **seed** meshes (before Palace ``UniformLevels`` /
+        ``Spheres`` refine). No MFEM/Palace dependency — numpy + gmsh only.
+
+        Parameters
+        ----------
+        filename :
+            Path to ``.msh`` or ``.bdf``.
+        return_elements :
+            If True, also return a DataFrame of the ``top_n`` worst tets by κ
+            (centroid + κ + h).
+        top_n :
+            Number of worst elements to include when ``return_elements`` is True.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One-row summary: ``n_tets``, ``h_min``, ``h_max``, ``kappa_min``,
+            ``kappa_max``, ``kappa_p50``, ``kappa_p90``, ``kappa_p99``.
+        (summary, worst) :
+            When ``return_elements`` is True.
+        """
+        filetype = Mesh._mesh_filetype(filename)
+        if filetype == ".msh":
+            nodes, _tris, tets = Mesh._read_msh_for_plot(filename)
+        else:
+            nodes, _tris, tets = Mesh._read_bdf_for_plot(filename)
+
+        if not tets:
+            raise ValueError(
+                f"No volume tetrahedra found in {filename}; "
+                "mesh_quality currently supports linear tets only."
+            )
+
+        kappas = np.empty(len(tets), dtype=float)
+        hs = np.empty(len(tets), dtype=float)
+        cents = np.empty((len(tets), 3), dtype=float)
+        for i, (_phys, corners) in enumerate(tets):
+            verts = np.asarray([nodes[n] for n in corners], dtype=float)
+            kappas[i], hs[i] = Mesh._tet_kappa_h(verts)
+            cents[i] = verts.mean(axis=0)
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "n_tets": int(len(tets)),
+                    "h_min": float(np.min(hs)),
+                    "h_max": float(np.max(hs)),
+                    "kappa_min": float(np.min(kappas)),
+                    "kappa_max": float(np.max(kappas)),
+                    "kappa_p50": float(np.percentile(kappas, 50)),
+                    "kappa_p90": float(np.percentile(kappas, 90)),
+                    "kappa_p99": float(np.percentile(kappas, 99)),
+                }
+            ]
+        )
+        if not return_elements:
+            return summary
+
+        n = max(0, min(int(top_n), len(tets)))
+        order = np.argsort(-kappas)[:n]
+        worst = pd.DataFrame(
+            {
+                "tet_index": order.astype(int),
+                "kappa": kappas[order],
+                "h": hs[order],
+                "centroid_x": cents[order, 0],
+                "centroid_y": cents[order, 1],
+                "centroid_z": cents[order, 2],
+            }
+        )
+        return summary, worst
+
     @staticmethod
     def _mesh_filetype(filename: str | Path) -> str:
         suffix = Path(filename).suffix.lower()
