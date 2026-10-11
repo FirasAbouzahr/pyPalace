@@ -55,6 +55,24 @@ def _fill_holes(geom) -> Any:
     return parts[0] if len(parts) == 1 else MultiPolygon(parts)
 
 
+def _min_geometry_gap(geoms: dict[str, Any]) -> float | None:
+    """Smallest positive Shapely distance between distinct named geometries."""
+    names = list(geoms)
+    best: float | None = None
+    for i, a in enumerate(names):
+        ga = geoms[a]
+        if ga is None or getattr(ga, "is_empty", True):
+            continue
+        for b in names[i + 1 :]:
+            gb = geoms[b]
+            if gb is None or getattr(gb, "is_empty", True):
+                continue
+            d = float(ga.distance(gb))
+            if d > 0.0 and (best is None or d < best):
+                best = d
+    return best
+
+
 def _flatten_polygons(geom) -> list[Polygon]:
     """Return individual non-empty Polygon objects from a Shapely geometry."""
     if geom is None or geom.is_empty:
@@ -987,6 +1005,12 @@ def mesh_gds(
 
     ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
     it on filleted GDS paths often triggers OpenCASCADE wire failures.
+
+    ``fuzzy_value`` is OCC boolean tolerance in **mesh units** (after
+    ``mesh_scale``). Default matches the polygon snap (~1 nm). Values larger
+    than half the smallest SurfaceMap metal–metal gap are clamped automatically
+    — oversized fuzzy collapses near-touching metals and Gmsh then fails with
+    ``Invalid boundary mesh (overlapping facets)``.
     """
     (
         generate_mesh,
@@ -1273,6 +1297,22 @@ def mesh_gds(
     )
     if fuzzy_value == None:
         fuzzy_value = float(snap)
+    else:
+        fuzzy_value = float(fuzzy_value)
+    # Oversized fuzzy collapses sub-gap clearances (e.g. ~35 nm metal–metal
+    # with fuzzy=0.1 µm) and Gmsh reports overlapping facets on a surface.
+    min_metal_gap = _min_geometry_gap(name_geoms)
+    if min_metal_gap != None and fuzzy_value >= 0.5 * float(min_metal_gap):
+        safe = min(max(float(snap), 0.25 * float(min_metal_gap)), 0.49 * float(min_metal_gap))
+        print(
+            "warning: fuzzy_value={:g} is >= half the smallest SurfaceMap "
+            "metal–metal gap ({:g} mesh units); clamping to {:g} to avoid "
+            "OCC/Gmsh overlapping-facet failures. Omit fuzzy_value to use "
+            "snap={:g}, or pass a value << that gap.".format(
+                float(fuzzy_value), float(min_metal_gap), float(safe), float(snap)
+            )
+        )
+        fuzzy_value = float(safe)
 
     output_path = Path(output_mesh)
     output_path.parent.mkdir(parents=True, exist_ok=True)
