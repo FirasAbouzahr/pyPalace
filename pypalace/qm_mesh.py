@@ -1,0 +1,472 @@
+"""
+Quantum Metal → MeshWell adapter for Palace.
+
+Builds a SurfaceMap (auto metal tags + QM-only auto ``ground_plane``) from
+a Qiskit Metal design and meshes via :func:`pypalace.gds_mesh.mesh_polygons`.
+
+Airbridges are not supported yet — detection raises ``NotImplementedError``.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Mapping
+
+import pandas as pd
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
+
+from .gds_mesh import (
+    _chip_bbox,
+    _flatten_polygons,
+    assign_missing_attrs,
+    mesh_polygons,
+    validate_gap_map,
+    validate_surface_map,
+)
+
+
+_AIRBRIDGE_TOKENS = (
+    "airbridge",
+    "air_bridge",
+    "air-bridge",
+    "Airbridge",
+    "AirBridge",
+)
+
+
+def _detect_airbridges(design: Any, surfaces_df: pd.DataFrame) -> list[str]:
+    """Return human-readable hits for unsupported airbridge geometry."""
+    hits: list[str] = []
+    id_to_name = _component_id_to_name(design)
+
+    for _, row in surfaces_df.iterrows():
+        name = str(row["name"])
+        comp = row["component"]
+        comp_name = id_to_name.get(int(comp), str(comp))
+        blob = f"{comp_name} {name}".lower()
+        if any(tok.lower() in blob for tok in _AIRBRIDGE_TOKENS):
+            hits.append(f"qgeometry ({comp_name!r}, {name!r})")
+
+    components = getattr(design, "components", None) or {}
+    for cname, component in components.items():
+        cls_name = type(component).__name__
+        if any(tok.lower() in cls_name.lower() for tok in _AIRBRIDGE_TOKENS):
+            hits.append(f"component class {cls_name!r} ({cname!r})")
+        options = getattr(component, "options", None) or {}
+        try:
+            keys = list(options.keys())
+        except Exception:
+            keys = []
+        for key in keys:
+            if any(tok.lower() in str(key).lower() for tok in _AIRBRIDGE_TOKENS):
+                hits.append(f"component {cname!r} option {key!r}")
+
+    # de-dupe preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for h in hits:
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out
+
+
+def _component_id_to_name(design: Any) -> dict[int, str]:
+    from .meshing import Mesh
+
+    return Mesh._qmetal_component_id_to_name(design)
+
+
+def _lookup_attr(
+    mapping: Mapping[Any, Any] | None,
+    component_id: Any,
+    surface_name: str,
+    id_to_name: dict[int, str],
+) -> int | None:
+    if not mapping:
+        return None
+    from .meshing import Mesh
+
+    value, _key = Mesh._lookup_qm_surface_key(
+        mapping, component_id, surface_name, id_to_name
+    )
+    if value is None:
+        return None
+    return int(value)
+
+
+def build_qm_meshwell_layout(
+    design: Any,
+    *,
+    Attributes: dict[str | tuple[int | str, str], int] | None = None,
+    gap_attributes: dict[str | tuple[int | str, str], int] | None = None,
+    margin: float = 0.5,
+    margin_x: float | None = None,
+    margin_y: float | None = None,
+    ground_plane_attr: int | str = "auto",
+    auto_ground: bool = True,
+) -> dict[str, Any]:
+    """
+    Convert a Quantum Metal design into MeshWell ``mesh_polygons`` inputs.
+
+    - Metals (``subtract=False``): auto SurfaceMap by qgeometry **name**
+      (disambiguated with component name on collision). ``Attributes``
+      overrides Palace attr ids when provided.
+    - Gaps / etch (``subtract=True``): only tagged when listed in
+      ``gap_attributes``; otherwise CAD-only dielectric carvers.
+    - ``ground_plane``: when ``auto_ground`` (QM default), synthesized as
+      ``chip_bbox − metals − etches`` and added to the SurfaceMap.
+      GDS ``mesh_gds`` does **not** use this helper — no auto ground there.
+    """
+    from .meshing import Mesh
+
+    surfaces_df = Mesh._collect_qm_imprint_surfaces(design).copy()
+    if surfaces_df.empty:
+        raise ValueError(
+            "No surface geometry found in Quantum Metal design "
+            "(poly + buffered path tables are empty)."
+        )
+    if "helper" in surfaces_df.columns:
+        surfaces_df = surfaces_df[surfaces_df["helper"] == False]
+
+    air_hits = _detect_airbridges(design, surfaces_df)
+    if air_hits:
+        raise NotImplementedError(
+            "Airbridges are not supported on the MeshWell QM path yet "
+            "(coplanar z=0 metals only). Detected: "
+            + "; ".join(air_hits)
+            + ". Omit/flatten airbridge geometry, or use backend='gmsh' "
+            "(also coplanar — airbridges are not meshed as 3D bridges)."
+        )
+
+    if margin_x is None:
+        margin_x = margin
+    if margin_y is None:
+        margin_y = margin
+
+    id_to_name = _component_id_to_name(design)
+    Attributes = dict(Attributes or {})
+    gap_attributes = dict(gap_attributes or {})
+
+    metal_groups: dict[str, list[Polygon]] = defaultdict(list)
+    metal_attr_hints: dict[str, int] = {}
+    etch_polys: list[Polygon] = []
+    etch_meta: list[tuple[Any, str]] = []  # (component, name) per etch poly
+    all_imprints: list[Polygon] = []
+
+    # First pass: collect metals / etches; choose SurfaceMap keys.
+    name_counts: dict[str, int] = defaultdict(int)
+    for _, row in surfaces_df.iterrows():
+        if bool(row["subtract"]):
+            continue
+        name_counts[str(row["name"])] += 1
+
+    for _, row in surfaces_df.iterrows():
+        name = str(row["name"])
+        component = row["component"]
+        geom = row["geometry"]
+        parts = _flatten_polygons(geom)
+        if not parts:
+            continue
+        all_imprints.extend(parts)
+        is_subtract = bool(row["subtract"])
+        if is_subtract:
+            for p in parts:
+                etch_polys.append(p)
+                etch_meta.append((component, name))
+            continue
+
+        # Auto tag by qgeometry name; disambiguate if the same name appears
+        # on multiple components (use component_name_surface_name).
+        comp_name = id_to_name.get(int(component), str(component))
+        if name_counts[name] > 1:
+            key = f"{comp_name}_{name}"
+        else:
+            key = name
+        metal_groups[key].extend(parts)
+        hinted = _lookup_attr(Attributes, component, name, id_to_name)
+        if hinted is not None:
+            if key in metal_attr_hints and metal_attr_hints[key] != hinted:
+                raise ValueError(
+                    f"Conflicting Attributes for SurfaceMap key {key!r}: "
+                    f"{metal_attr_hints[key]} vs {hinted}"
+                )
+            metal_attr_hints[key] = hinted
+
+    if not metal_groups:
+        raise ValueError(
+            "No metal (subtract=False) surfaces found in Quantum Metal design."
+        )
+
+    # Build polygon list + SurfaceMap for metals.
+    polygons: list[Polygon] = []
+    surface_map: dict[str, dict] = {}
+    for key in sorted(metal_groups.keys()):
+        ids: list[int] = []
+        for p in metal_groups[key]:
+            ids.append(len(polygons))
+            polygons.append(p)
+        entry: dict[str, Any] = {"polygons": ids}
+        if key in metal_attr_hints:
+            entry["attr"] = int(metal_attr_hints[key])
+        surface_map[key] = entry
+
+    # Explicit gap_attributes → GapMap over etch polygon list.
+    gap_map: dict[str, dict] = {}
+    if etch_polys and gap_attributes:
+        # group etch indices by resolved gap name
+        gap_groups: dict[str, list[int]] = defaultdict(list)
+        gap_attr_hints: dict[str, int] = {}
+        for gid, (component, name) in enumerate(etch_meta):
+            attr = _lookup_attr(gap_attributes, component, name, id_to_name)
+            if attr is None:
+                continue
+            comp_name = id_to_name.get(int(component), str(component))
+            # prefer geometry name; disambiguate like metals
+            etch_name_count = sum(1 for _, n in etch_meta if n == name)
+            gkey = f"{comp_name}_{name}" if etch_name_count > 1 else name
+            gap_groups[gkey].append(gid)
+            gap_attr_hints[gkey] = int(attr)
+        for gkey, gids in gap_groups.items():
+            gap_map[gkey] = {"gaps": gids, "attr": gap_attr_hints[gkey]}
+
+    # QM-only auto ground: leftover chip after all imprints.
+    ground_ids: list[int] = []
+    if auto_ground:
+        if not all_imprints:
+            raise ValueError("Cannot build ground_plane: no imprint polygons")
+        chip = _chip_bbox(all_imprints, float(margin_x), float(margin_y))
+        imprint_union = unary_union(all_imprints)
+        ground_geom = chip.difference(imprint_union)
+        ground_parts = [
+            p for p in _flatten_polygons(ground_geom) if not p.is_empty and p.area > 0
+        ]
+        if not ground_parts:
+            raise ValueError(
+                "auto ground_plane was empty after subtracting metals/etches "
+                "from the chip bbox; check margin and qgeometry coverage."
+            )
+        for p in ground_parts:
+            ground_ids.append(len(polygons))
+            polygons.append(p)
+
+    # Metals first (preserve explicit Attributes ids); ground attr assigned later
+    # so volumes stay substrate → air → ground → far_field.
+    metal_only = assign_missing_attrs(
+        validate_surface_map(surface_map, n_polygons=len(polygons))
+    )
+    surface_map = dict(metal_only)
+    if ground_ids:
+        used = {int(v["attr"]) for v in metal_only.values()}
+        placeholder = (max(used) if used else 0) + 10_000
+        if ground_plane_attr != "auto":
+            placeholder = int(ground_plane_attr)
+            if placeholder in used:
+                raise ValueError(
+                    f"ground_plane_attr={placeholder} collides with a metal attribute"
+                )
+        surface_map["ground_plane"] = {
+            "polygons": ground_ids,
+            "attr": int(placeholder),
+        }
+
+    if gap_map:
+        gap_map = validate_gap_map(
+            gap_map,
+            n_gaps=len(etch_polys),
+            reserved_names=set(surface_map.keys()),
+        )
+
+    return {
+        "polygons": polygons,
+        "surface_map": surface_map,
+        "gap_map": gap_map,
+        "gap_polygons": etch_polys,  # may be empty — still pass through
+        "metal_keys": sorted(metal_only.keys()),
+        "ground_ids": ground_ids,
+        "ground_plane_attr": ground_plane_attr,
+    }
+
+
+def mesh_quantum_metal_meshwell(
+    design: Any,
+    output_mesh: str | Path = "mesh_for_pyPalace.msh",
+    *,
+    Attributes: dict[str | tuple[int | str, str], int] | None = None,
+    gap_attributes: dict[str | tuple[int | str, str], int] | None = None,
+    substrate_thickness: float = 0.5,
+    airbox_height: float = 0.5,
+    margin: float = 0.5,
+    margin_x: float | None = None,
+    margin_y: float | None = None,
+    volume_mesh_size: float = 0.25,
+    surface_mesh_size: float = 0.02,
+    custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
+    refinement_radius: float = 0.15,
+    mesh_scale: float = 1000.0,
+    ground_plane_attr: int | str = "auto",
+    farfield_attr: int | str = "auto",
+    substrate_attr: int | str = "auto",
+    air_attr: int | str = "auto",
+    auto_ground: bool = True,
+    fuzzy_value: float | None = None,
+    identify_arcs: bool = False,
+) -> pd.DataFrame:
+    """
+    Mesh a Quantum Metal design with the MeshWell backend.
+
+    Auto-tags metals by qgeometry name, synthesizes ``ground_plane`` when
+    ``auto_ground=True`` (QM-only; not used by ``mesh_gds``), and leaves
+    etch/gap tagging to ``gap_attributes``. Airbridges raise
+    ``NotImplementedError``.
+    """
+    layout = build_qm_meshwell_layout(
+        design,
+        Attributes=Attributes,
+        gap_attributes=gap_attributes,
+        margin=margin,
+        margin_x=margin_x,
+        margin_y=margin_y,
+        ground_plane_attr=ground_plane_attr,
+        auto_ground=auto_ground,
+    )
+
+    # custom_surface_mesh may use QM Attribute-style keys; resolve to SurfaceMap
+    # / GapMap names (geometry name or ground_plane / far_field).
+    custom_out: dict[str, float] = {}
+    if custom_surface_mesh:
+        id_to_name = _component_id_to_name(design)
+        from .meshing import Mesh
+
+        surfaces_df = Mesh._collect_qm_imprint_surfaces(design)
+        for key, size in custom_surface_mesh.items():
+            if key in ("ground_plane", "far_field"):
+                custom_out[str(key)] = float(size)
+                continue
+            if isinstance(key, str) and key in layout["surface_map"]:
+                custom_out[key] = float(size)
+                continue
+            if isinstance(key, str) and key in layout["gap_map"]:
+                custom_out[key] = float(size)
+                continue
+            # try match against rows → resolved SurfaceMap/GapMap key
+            matched = False
+            for _, row in surfaces_df.iterrows():
+                val, _ = Mesh._lookup_qm_surface_key(
+                    {key: size}, row["component"], str(row["name"]), id_to_name
+                )
+                if val is None:
+                    continue
+                name = str(row["name"])
+                comp_name = id_to_name.get(int(row["component"]), str(row["component"]))
+                # same disambiguation as build
+                n_count = int((surfaces_df["name"] == name).sum())
+                resolved = f"{comp_name}_{name}" if n_count > 1 else name
+                if bool(row["subtract"]):
+                    if resolved in layout["gap_map"]:
+                        custom_out[resolved] = float(size)
+                        matched = True
+                elif resolved in layout["surface_map"]:
+                    custom_out[resolved] = float(size)
+                    matched = True
+            if not matched and isinstance(key, str):
+                custom_out[key] = float(size)
+
+    smap = dict(layout["surface_map"])
+    # Legacy QM attr order: metals → substrate → air → ground_plane → far_field
+    max_metal = max(
+        (int(smap[k]["attr"]) for k in layout["metal_keys"]),
+        default=0,
+    )
+    if substrate_attr == "auto":
+        substrate_attr = max_metal + 1
+    else:
+        substrate_attr = int(substrate_attr)
+    if air_attr == "auto":
+        air_attr = int(substrate_attr) + 1
+    else:
+        air_attr = int(air_attr)
+    if layout["ground_ids"]:
+        g_attr = layout["ground_plane_attr"]
+        if g_attr == "auto":
+            g_attr = int(air_attr) + 1
+        else:
+            g_attr = int(g_attr)
+        smap["ground_plane"] = {
+            "polygons": list(layout["ground_ids"]),
+            "attr": int(g_attr),
+        }
+        if farfield_attr == "auto":
+            farfield_attr = int(g_attr) + 1
+    elif farfield_attr == "auto":
+        farfield_attr = int(air_attr) + 1
+
+    gmap = dict(layout["gap_map"] or {})
+    if gmap:
+        gmap = assign_missing_attrs(gmap, start=int(farfield_attr) + 1)
+
+    # Chip / ground already includes margin → do not pad again.
+    return mesh_polygons(
+        layout["polygons"],
+        smap,
+        output_mesh=output_mesh,
+        substrate_thickness=substrate_thickness,
+        airbox_height=airbox_height,
+        margin=0.0,
+        margin_x=0.0,
+        margin_y=0.0,
+        volume_mesh_size=volume_mesh_size,
+        surface_mesh_size=surface_mesh_size,
+        custom_surface_mesh=custom_out or None,
+        refinement_radius=refinement_radius,
+        mesh_scale=mesh_scale,
+        farfield_attr=int(farfield_attr) if farfield_attr != "auto" else farfield_attr,
+        substrate_attr=int(substrate_attr),
+        air_attr=int(air_attr),
+        gap_map=gmap or None,
+        gap_polygons=layout["gap_polygons"],
+        identify_arcs=identify_arcs,
+        fuzzy_value=fuzzy_value,
+        log_label="Quantum Metal",
+    )
+
+
+def compare_qm_mesh_backends(
+    design: Any,
+    output_dir: str | Path = "/tmp/qm_mesh_compare",
+    *,
+    Attributes: dict | None = None,
+    surface_mesh_size: float = 0.02,
+    volume_mesh_size: float = 0.25,
+    mesh_scale: float = 1000.0,
+    **kwargs: Any,
+) -> pd.DataFrame:
+    """
+    Mesh the same design with ``gmsh`` and ``meshwell`` backends and compare
+    :meth:`Mesh.mesh_quality` summaries (κ / h).
+    """
+    from .meshing import Mesh
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for backend in ("gmsh", "meshwell"):
+        path = out / f"qm_{backend}.msh"
+        print(f"=== meshing backend={backend} → {path} ===", flush=True)
+        Mesh.mesh_Quantum_Metal_design(
+            design,
+            output_mesh=path,
+            Attributes=Attributes,
+            surface_mesh_size=surface_mesh_size,
+            volume_mesh_size=volume_mesh_size,
+            mesh_scale=mesh_scale,
+            backend=backend,
+            **kwargs,
+        )
+        summary = Mesh.mesh_quality(path)
+        summary.insert(0, "backend", backend)
+        summary.insert(1, "mesh_file", str(path))
+        rows.append(summary)
+    return pd.concat(rows, ignore_index=True)

@@ -861,6 +861,33 @@ class Mesh:
         return validate_gap_map(gap_map, n_gaps=n_gaps)
 
     @staticmethod
+    def compare_qm_mesh_backends(
+        design: Any,
+        output_dir: str | Path = "/tmp/qm_mesh_compare",
+        *,
+        Attributes: dict | None = None,
+        surface_mesh_size: float = 0.02,
+        volume_mesh_size: float = 0.25,
+        mesh_scale: float = 1000.0,
+        **kwargs,
+    ):
+        """
+        Mesh one Quantum Metal design with both ``gmsh`` and ``meshwell``
+        backends and compare :meth:`mesh_quality` (Palace-style κ / h).
+        """
+        from .qm_mesh import compare_qm_mesh_backends
+
+        return compare_qm_mesh_backends(
+            design,
+            output_dir=output_dir,
+            Attributes=Attributes,
+            surface_mesh_size=surface_mesh_size,
+            volume_mesh_size=volume_mesh_size,
+            mesh_scale=mesh_scale,
+            **kwargs,
+        )
+
+    @staticmethod
     def mesh_gds(
         gds_file: str | Path,
         surface_map: dict,
@@ -1880,6 +1907,7 @@ class Mesh:
         output_mesh: str | Path = "mesh_for_pyPalace.msh",
         *,
         Attributes: dict[str | tuple[int | str, str], int] | None = None,
+        gap_attributes: dict[str | tuple[int | str, str], int] | None = None,
         substrate_thickness: float = 0.5,
         airbox_height: float = 0.5,
         margin: float = 0.5,
@@ -1894,6 +1922,9 @@ class Mesh:
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
+        backend: str = "meshwell",
+        auto_ground: bool = True,
+        fuzzy_value: float | None = None,
         geom_tol_factor: float = 0.01,
         enable_boundary_simplify: bool = True,
         boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
@@ -1903,12 +1934,15 @@ class Mesh:
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
     ):
-        """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
-           Only for coplanar designs.
+        """Generate a Palace-ready mesh from a Quantum Metal design.
+           Only for coplanar designs (no airbridges yet).
 
-        Polygon boundaries are simplified by default: runs of many small QM
-        edges (circles, meander bends, fillets) are merged into fewer Gmsh
-        lines/splines before imprinting.
+        Default ``backend="meshwell"`` uses the same MeshWell path as
+        :meth:`mesh_gds`: metals are auto-tagged by qgeometry name,
+        ``ground_plane`` is auto-synthesized when ``auto_ground=True``
+        (QM-only — ``mesh_gds`` never auto-grounds), and etch/gap surfaces
+        are tagged only via ``gap_attributes``. Pass ``backend="gmsh"`` for
+        the legacy pure-Gmsh imprint path (useful for quality A/B checks).
 
         Parameters
         ----------
@@ -1918,11 +1952,23 @@ class Mesh:
         output_mesh:
             Path to the ``.msh`` file to write.
         Attributes:
-            Mapping from polygon row name to Palace attribute. Keys may be
+            Optional Palace attribute overrides for metal surfaces. Keys may be
             ``"name"``, ``(component_id, "name")``, or ``("component_name", "name")``.
-            Rows not in this mapping are still imprinted, but receive no explicit
-            surface physical group. Tuple-keyed surfaces are named
-            ``component_name_surface_name`` in the mesh file.
+            On the MeshWell backend, all ``subtract=False`` metals are auto-tagged
+            even when omitted here; ``Attributes`` only pins attr ids. On the
+            legacy Gmsh backend, rows not in this mapping are imprinted but
+            receive no surface physical group. Tuple-keyed surfaces are named
+            ``component_name_surface_name`` in the Gmsh mesh file.
+        gap_attributes:
+            MeshWell backend only. Optional name→attr map for ``subtract=True``
+            etch/gap rows (same key styles as ``Attributes``). Untagged etches
+            stay untagged dielectric.
+        backend:
+            ``"meshwell"`` (default) or ``"gmsh"`` (legacy).
+        auto_ground:
+            MeshWell backend only. When True (default), synthesize a
+            ``ground_plane`` SurfaceMap entry as chip bbox minus metals/etches.
+            Ignored by ``mesh_gds`` (GDS keeps explicit ground tagging).
         substrate_thickness, airbox_height:
             Geometry lengths in the design's units. Qiskit Metal defaults to mm.
         margin:
@@ -1968,7 +2014,37 @@ class Mesh:
         simplify_smooth_angle_deg, simplify_max_deviation:
             Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
         """
-        
+        backend_norm = str(backend).strip().lower()
+        if backend_norm in ("meshwell", "mw"):
+            from .qm_mesh import mesh_quantum_metal_meshwell
+
+            return mesh_quantum_metal_meshwell(
+                design,
+                output_mesh=output_mesh,
+                Attributes=Attributes,
+                gap_attributes=gap_attributes,
+                substrate_thickness=substrate_thickness,
+                airbox_height=airbox_height,
+                margin=margin,
+                margin_x=margin_x,
+                margin_y=margin_y,
+                volume_mesh_size=volume_mesh_size,
+                surface_mesh_size=surface_mesh_size,
+                custom_surface_mesh=custom_surface_mesh,
+                refinement_radius=refinement_radius,
+                mesh_scale=mesh_scale,
+                ground_plane_attr=ground_plane_attr,
+                farfield_attr=farfield_attr,
+                substrate_attr=substrate_attr,
+                air_attr=air_attr,
+                auto_ground=auto_ground,
+                fuzzy_value=fuzzy_value,
+            )
+        if backend_norm not in ("gmsh", "legacy"):
+            raise ValueError(
+                f"backend must be 'meshwell' or 'gmsh', got {backend!r}"
+            )
+
         import gmsh
 
         if enable_boundary_simplify:
