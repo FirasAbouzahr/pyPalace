@@ -6,12 +6,15 @@ This module implements the GDS path:
 1. :func:`inspect_gds` — plot metal ``p*`` or gap ``g*`` ids (``gaps_only``)
 2. :func:`validate_surface_map` / SurfaceMap — name → polygon ids + attr
 3. Optional :func:`validate_gap_map` / GapMap — name → gap ids + attr
-4. :func:`mesh_gds` — MeshWell CAD/mesh with auto ``substrate``, ``air``,
-   ``far_field``, plus SurfaceMap metals and optional named ``gap_map``
-   surfaces (no catch-all gap tag)
+4. :func:`mesh_polygons` / :func:`mesh_gds` — MeshWell CAD/mesh with auto
+   ``substrate``, ``air``, ``far_field``, plus SurfaceMap metals and optional
+   named ``gap_map`` surfaces (no catch-all gap tag; QM auto-ground lives in
+   :mod:`pypalace.qm_mesh`)
 
-Default units are **micrometers (µm)** with ``mesh_scale=1`` (Palace
-``L0 = 1e-6``).
+Length kwargs (substrate, airbox, margin, mesh sizes, …) are always in
+**micrometers (µm)** — Palace mesh units when ``L0 = 1e-6``. ``mesh_scale``
+only converts GDS/design coordinates into those mesh units (``1`` for µm
+GDS, ``0.001`` for nm GDS, ``1000`` for mm / Quantum Metal).
 
 Requires ``meshwell`` and ``gdstk`` (core package dependencies).
 """
@@ -917,11 +920,10 @@ def _scale_polygon(poly: Polygon, mesh_scale: float) -> Polygon:
     return shapely_scale(poly, xfact=mesh_scale, yfact=mesh_scale, origin=(0, 0))
 
 
-# Physical defaults for mesh_gds, in micrometers (Palace mesh units when
-# L0=1e-6). When the corresponding kwarg is omitted (None), it is filled as
-# default_um / mesh_scale so GDS-native kwargs still satisfy
-# value * mesh_scale ≈ default_um in the mesh file.
-_MESH_GDS_DEFAULTS_UM: dict[str, float] = {
+# Physical defaults for mesh_gds / mesh_polygons, in micrometers (Palace
+# mesh units when L0=1e-6). Length kwargs are always µm; mesh_scale only
+# converts geometry coordinates into mesh units.
+_MESH_DEFAULTS_UM: dict[str, float] = {
     "substrate_thickness": 500.0,
     "airbox_height": 500.0,
     "margin": 500.0,
@@ -930,14 +932,15 @@ _MESH_GDS_DEFAULTS_UM: dict[str, float] = {
     "refinement_radius": 150.0,
 }
 
+# Back-compat alias (older imports / docs).
+_MESH_GDS_DEFAULTS_UM = _MESH_DEFAULTS_UM
 
-def mesh_gds(
-    gds_file: str | Path,
+
+def mesh_polygons(
+    polygons: list[Polygon],
     surface_map: dict,
-    output_mesh: str | Path = "mesh_from_gds.msh",
+    output_mesh: str | Path = "mesh_from_polygons.msh",
     *,
-    layers: Any = None,
-    cell_name: str | None = None,
     substrate_thickness: float | None = None,
     airbox_height: float | None = None,
     airbox_height_below: float = 0.0,
@@ -953,64 +956,27 @@ def mesh_gds(
     substrate_attr: int | str = "auto",
     air_attr: int | str = "auto",
     gap_map: dict | None = None,
+    gap_polygons: list[Polygon] | None = None,
     identify_arcs: bool = False,
     fuzzy_value: float | None = None,
+    log_label: str = "polygons",
 ) -> pd.DataFrame:
     """
-    Mesh a GDS layout with MeshWell for Palace.
+    Mesh a list of Shapely polygons with MeshWell for Palace.
 
-    Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces come
-    only from ``surface_map`` (no auto ground plane). Optional ``gap_map``
-    entries become named z=0 surfaces (tag + mesh size); anything not in
-    ``gap_map`` stays the plain substrate/air interface (no catch-all gap
-    physical group).
+    Shared CAD/mesh core used by :func:`mesh_gds` and the Quantum Metal
+    MeshWell backend. Auto-tags ``substrate``, ``air``, and ``far_field``.
+    Metal surfaces come only from ``surface_map`` (no auto ground here —
+    callers that want QM-style ground must synthesize a ``ground_plane``
+    entry in ``surface_map``).
 
-    **Units:** GDS coordinates and any *explicit* length kwargs are in
-    GDS-native units; they are multiplied by ``mesh_scale`` into the mesh.
-    With ``mesh_scale=1`` that means µm and Palace ``L0 = 1e-6``. For an nm
-    GDS use ``mesh_scale=0.001`` (nm→µm in the mesh) and keep ``L0 = 1e-6``.
+    Length kwargs (substrate, airbox, margin, mesh sizes, custom sizes,
+    refinement radius, ``airbox_height_below``) are always in **µm**.
+    ``mesh_scale`` only multiplies polygon coordinates into mesh units.
 
-    Omitted size/geometry defaults (``surface_mesh_size``,
-    ``volume_mesh_size``, ``refinement_radius``, ``substrate_thickness``,
-    ``airbox_height``, ``margin``) are physical **µm** targets filled as
-    ``default_um / mesh_scale`` so ``value * mesh_scale`` stays ~µm in the
-    mesh. ``airbox_height_below`` still defaults to ``0`` (off). Explicit
-    kwargs are never auto-scaled — pass them in GDS-native units.
-
-    CAD is pure MeshWell: SurfaceMap metals are emitted **per polygon
-    piece** with holes filled (so large grounds stay on the z=0 interface);
-    every interior gap piece carves the nest (named ``gap_map`` entries get
-    sizing/tags; unnamed gaps are CAD-only and stay untagged); a full-chip
-    ``z0_background`` ``PolySurface`` (never a Palace tag) sits at the
-    highest surface ``mesh_order``. Substrate/air are ``PolyPrism`` volumes.
-    Remap classifies shared z=0 faces against the original metal footprints
-    (holes preserved) and named-gap footprints.
-
-    ``layers`` selects GDS ``(layer, datatype)`` pairs merged onto the single
-    z=0 metal plane. Default ``None`` = **all** layers in the cell. Pass the
-    same value to :func:`inspect_gds` so ``poly_id`` / ``gap_id`` match.
-
-    ``airbox_height`` is the vacuum above the metal plane (default 500 µm
-    physical, auto-scaled by ``mesh_scale`` when omitted).
-    ``airbox_height_below`` adds optional vacuum under the substrate
-    (default **0** — same stack as before; not auto-scaled). When set, that
-    volume shares the Palace ``air`` attribute and far_field grows to the
-    new bottom / sides.
-
-    Optional ``gap_map`` names **interior** gap pieces (ids from
-    :func:`inspect_gds` with ``gaps_only=True``) for Palace post-processing
-    and per-name ``custom_surface_mesh`` sizing (same dict / knobs as metals).
-    Gap ids ignore ``margin_*`` (tight metal bbox only). Omitted / empty
-    → metals only; unmapped trenches stay untagged volume interface.
-
-    ``identify_arcs`` defaults to ``False`` (MeshWell's own default). Enabling
-    it on filleted GDS paths often triggers OpenCASCADE wire failures.
-
-    ``fuzzy_value`` is OCC boolean tolerance in **mesh units** (after
-    ``mesh_scale``). Default matches the polygon snap (~1 nm). Values larger
-    than half the smallest SurfaceMap metal–metal gap are clamped automatically
-    — oversized fuzzy collapses near-touching metals and Gmsh then fails with
-    ``Invalid boundary mesh (overlapping facets)``.
+    ``gap_polygons``, when given, replaces the usual
+    ``enumerate_gap_pieces(polygons)`` derivation (used for QM etch
+    footprints). Named ``gap_map`` ids index into that list.
     """
     (
         generate_mesh,
@@ -1022,16 +988,9 @@ def mesh_gds(
 
     from .meshing import Mesh
 
-    layer_list = resolve_gds_layers(
-        gds_file, layers=layers, cell_name=cell_name
-    )
-    polys = load_gds_polygons(
-        gds_file, layers=layer_list, cell_name=cell_name
-    )
+    polys = list(polygons)
     if len(polys) == 0:
-        raise ValueError(
-            f"No polygons found on layers={layer_list} in {gds_file}"
-        )
+        raise ValueError("polygons must be a non-empty list")
 
     smap = assign_missing_attrs(
         validate_surface_map(surface_map, n_polygons=len(polys))
@@ -1041,8 +1000,8 @@ def mesh_gds(
         raise ValueError("mesh_scale must be non-zero")
 
     def _default_um(name: str, value: float | None) -> float:
-        if value == None:
-            return float(_MESH_GDS_DEFAULTS_UM[name]) / float(mesh_scale)
+        if value is None:
+            return float(_MESH_DEFAULTS_UM[name])
         return float(value)
 
     substrate_thickness = _default_um("substrate_thickness", substrate_thickness)
@@ -1051,15 +1010,16 @@ def mesh_gds(
     volume_mesh_size = _default_um("volume_mesh_size", volume_mesh_size)
     surface_mesh_size = _default_um("surface_mesh_size", surface_mesh_size)
     refinement_radius = _default_um("refinement_radius", refinement_radius)
+    airbox_height_below = float(airbox_height_below)
 
-    if margin_x == None:
+    if margin_x is None:
         margin_x = margin
-    if margin_y == None:
+    if margin_y is None:
         margin_y = margin
-    if custom_surface_mesh == None:
+    if custom_surface_mesh is None:
         custom_surface_mesh = {}
     else:
-        # Explicit custom sizes are GDS-native, same as other length kwargs.
+        # Custom sizes are µm, same as other length kwargs.
         custom_surface_mesh = {
             str(k): float(v) for k, v in custom_surface_mesh.items()
         }
@@ -1072,8 +1032,11 @@ def mesh_gds(
     if float(airbox_height_below) < 0:
         raise ValueError("airbox_height_below must be >= 0 (0 keeps prior behavior)")
 
-    # Interior gap pieces only (margin-free; same enum as inspect gaps_only).
-    gap_pieces = enumerate_gap_pieces(polys)
+    # Interior gap pieces: explicit list (QM etches) or derived from metals.
+    if gap_polygons is None:
+        gap_pieces = enumerate_gap_pieces(polys)
+    else:
+        gap_pieces = list(gap_polygons)
     gmap = validate_gap_map(
         gap_map,
         n_gaps=len(gap_pieces),
@@ -1130,10 +1093,11 @@ def mesh_gds(
 
     # Geometry in mesh units (µm by default). Snap ~1 nm to kill micro-edges
     # that break OCC wires without collapsing real JJ-scale features.
-    snap = max(1e-3, 1e-6 * float(mesh_scale))
+    scale = float(mesh_scale)
+    snap = max(1e-3, 1e-6 * scale)
     scaled_polys: list[Any] = []
     for p in polys:
-        cleaned = _clean_polygon(_scale_polygon(p, mesh_scale), snap=snap)
+        cleaned = _clean_polygon(_scale_polygon(p, scale), snap=snap)
         if not cleaned:
             raise ValueError(
                 "A SurfaceMap polygon became empty after cleaning/scaling; "
@@ -1143,34 +1107,40 @@ def mesh_gds(
             cleaned[0] if len(cleaned) == 1 else unary_union(cleaned)
         )
 
+    # Margins are µm → convert to native design/GDS units before the bbox,
+    # then scale the chip into mesh units with the polygons.
+    margin_x_native = float(margin_x) / scale
+    margin_y_native = float(margin_y) / scale
     chip_parts = _clean_polygon(
-        _scale_polygon(_chip_bbox(polys, float(margin_x), float(margin_y)), mesh_scale),
+        _scale_polygon(_chip_bbox(polys, margin_x_native, margin_y_native), scale),
         snap=snap,
     )
     if not chip_parts:
         raise ValueError("Failed to build chip bounding box polygon")
     chip = chip_parts[0]
 
-    z_sub = -float(substrate_thickness) * mesh_scale
-    z_air = float(airbox_height) * mesh_scale
-    z_air_below = z_sub - float(airbox_height_below) * mesh_scale
-    h_vol = float(volume_mesh_size) * mesh_scale
-    h_surf = float(surface_mesh_size) * mesh_scale
-    h_refine = float(refinement_radius) * mesh_scale
+    # Length kwargs are already µm (mesh units) — do not multiply by mesh_scale.
+    z_sub = -float(substrate_thickness)
+    z_air = float(airbox_height)
+    z_air_below = z_sub - float(airbox_height_below)
+    h_vol = float(volume_mesh_size)
+    h_surf = float(surface_mesh_size)
+    h_refine = float(refinement_radius)
 
-    # Guard against accidentally tiny sizes (e.g. old mm defaults like 0.02 on a
-    # µm GDS) which request billions of elements and hang after CAD.
+    # Guard against accidentally tiny sizes (e.g. old mm values like 0.02
+    # passed as if they were µm) which request billions of elements.
     _minx, _miny, _maxx, _maxy = chip.bounds
     chip_span = max(_maxx - _minx, _maxy - _miny, 1e-30)
     est_surf_elems = (chip_span / max(h_surf, 1e-30)) ** 2
     if est_surf_elems > 5.0e7:
         raise ValueError(
             "Mesh size is far too fine for this layout and would hang for a very "
-            f"long time (chip span ≈ {chip_span:.4g} mesh units, "
-            f"surface_mesh_size → {h_surf:.4g}, rough surface-element estimate "
+            f"long time (chip span ≈ {chip_span:.4g} µm, "
+            f"surface_mesh_size={h_surf:.4g} µm, rough surface-element estimate "
             f"~{est_surf_elems:.1e}). "
-            "mesh_gds defaults are in µm (mesh_scale=1, surface_mesh_size=20, "
-            "volume_mesh_size=250). If the GDS is in mm, pass mesh_scale=1000."
+            "Length kwargs are always in µm (defaults: surface_mesh_size=20, "
+            "volume_mesh_size=250). mesh_scale only converts geometry "
+            "(µm GDS → 1, nm GDS → 0.001, mm / Quantum Metal → 1000)."
         )
 
     # Remap footprints keep real metal holes (so trenches are not voted as
@@ -1318,9 +1288,9 @@ def mesh_gds(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(
-        "meshing GDS (MeshWell): chip_span={:.4g}, h_vol={:.4g}, h_surf={:.4g}, "
+        "meshing {} (MeshWell): chip_span={:.4g}, h_vol={:.4g}, h_surf={:.4g}, "
         "mesh_scale={:g} (mesh units)".format(
-            chip_span, h_vol, h_surf, float(mesh_scale)
+            log_label, chip_span, h_vol, h_surf, float(mesh_scale)
         )
     )
 
@@ -1382,7 +1352,7 @@ def mesh_gds(
     # Same sizing path for SurfaceMap metals and named gap_map surfaces.
     resolution_specs: dict[str, list] = {}
     for name in list(ordered_names) + list(ordered_gap_names):
-        size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
+        size = float(custom_surface_mesh.get(name, surface_mesh_size))
         specs = [ConstantInField(apply_to="surfaces", resolution=size)]
         if h_refine > 0 and size < h_vol:
             specs.append(
@@ -1414,7 +1384,7 @@ def mesh_gds(
     except Exception as e:
         msg = str(e)
         raise RuntimeError(
-            "MeshWell/OpenCASCADE failed while building the GDS mesh "
+            "MeshWell/OpenCASCADE failed while building the mesh "
             f"({type(e).__name__}: {msg}). "
             "Common causes: invalid/overlapping GDS polygons or mesh_scale "
             "mismatch. Check SurfaceMap polygons via inspect_gds(...)."
@@ -1434,6 +1404,80 @@ def mesh_gds(
 
     mesh_attributes = Mesh.get_mesh_attributes(str(output_path))
     return mesh_attributes.sort_values("ID")
+
+
+
+def mesh_gds(
+    gds_file: str | Path,
+    surface_map: dict,
+    output_mesh: str | Path = "mesh_from_gds.msh",
+    *,
+    layers: Any = None,
+    cell_name: str | None = None,
+    substrate_thickness: float | None = None,
+    airbox_height: float | None = None,
+    airbox_height_below: float = 0.0,
+    margin: float | None = None,
+    margin_x: float | None = None,
+    margin_y: float | None = None,
+    volume_mesh_size: float | None = None,
+    surface_mesh_size: float | None = None,
+    custom_surface_mesh: dict[str, float] | None = None,
+    refinement_radius: float | None = None,
+    mesh_scale: float = 1.0,
+    farfield_attr: int | str = "auto",
+    substrate_attr: int | str = "auto",
+    air_attr: int | str = "auto",
+    gap_map: dict | None = None,
+    identify_arcs: bool = False,
+    fuzzy_value: float | None = None,
+) -> pd.DataFrame:
+    """
+    Mesh a GDS layout with MeshWell for Palace.
+
+    Auto-tags ``substrate``, ``air``, and ``far_field``. Metal surfaces come
+    only from ``surface_map`` (no auto ground plane). Optional ``gap_map``
+    entries become named z=0 surfaces (tag + mesh size); anything not in
+    ``gap_map`` stays the plain substrate/air interface (no catch-all gap
+    physical group).
+
+    See :func:`mesh_polygons` for the shared MeshWell core and unit notes.
+    ``layers`` selects GDS ``(layer, datatype)`` pairs (default: all layers).
+    """
+    layer_list = resolve_gds_layers(
+        gds_file, layers=layers, cell_name=cell_name
+    )
+    polys = load_gds_polygons(
+        gds_file, layers=layer_list, cell_name=cell_name
+    )
+    if len(polys) == 0:
+        raise ValueError(
+            f"No polygons found on layers={layer_list} in {gds_file}"
+        )
+    return mesh_polygons(
+        polys,
+        surface_map,
+        output_mesh=output_mesh,
+        substrate_thickness=substrate_thickness,
+        airbox_height=airbox_height,
+        airbox_height_below=airbox_height_below,
+        margin=margin,
+        margin_x=margin_x,
+        margin_y=margin_y,
+        volume_mesh_size=volume_mesh_size,
+        surface_mesh_size=surface_mesh_size,
+        custom_surface_mesh=custom_surface_mesh,
+        refinement_radius=refinement_radius,
+        mesh_scale=mesh_scale,
+        farfield_attr=farfield_attr,
+        substrate_attr=substrate_attr,
+        air_attr=air_attr,
+        gap_map=gap_map,
+        identify_arcs=identify_arcs,
+        fuzzy_value=fuzzy_value,
+        log_label="GDS",
+    )
+
 
 
 def _face_sample_xy(gmsh, face_tag: int) -> np.ndarray | None:

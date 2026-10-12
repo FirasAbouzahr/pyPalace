@@ -897,8 +897,10 @@ class Mesh:
         polygon piece with holes filled for CAD (remap still uses the real
         footprints); interior gaps carve the nest so grounds stay attached.
         An internal CAD-only ``z0_background`` surface keeps nesting robust.
-        The Quantum Metal mesher (:meth:`mesh_Quantum_Metal_design`) is
-        unchanged and still uses mm design units with ``mesh_scale=1000``.
+
+        All length kwargs are in **µm** (Palace mesh units when ``L0 = 1e-6``).
+        ``mesh_scale`` only converts GDS coordinates into those units — same
+        convention as :meth:`mesh_Quantum_Metal_design`.
 
         Parameters
         ----------
@@ -917,31 +919,24 @@ class Mesh:
         cell_name : str, optional
             GDS cell to read; default is the top cell.
         substrate_thickness, airbox_height, margin, margin_x, margin_y:
-            Geometry lengths in **GDS-native units** when given explicitly
-            (multiplied by ``mesh_scale``). Omitted values default to
-            physical µm targets (500 µm substrate/airbox/margin) via
-            ``default_um / mesh_scale``. ``airbox_height`` is vacuum above
-            the metal plane.
+            Geometry lengths in **µm**. Omitted → 500 µm.
+            ``airbox_height`` is vacuum above the metal plane.
         airbox_height_below :
-            Optional vacuum under the substrate in GDS-native units.
-            Default ``0`` (unchanged stack; not auto-scaled). When > 0,
-            tagged as Palace ``air`` and far_field expands to the new
-            bottom / sides.
+            Optional vacuum under the substrate in **µm**. Default ``0``
+            (unchanged stack). When > 0, tagged as Palace ``air`` and
+            far_field expands to the new bottom / sides.
         volume_mesh_size, surface_mesh_size:
-            Bulk / metal-surface mesh targets. Explicit → GDS-native;
-            omitted → 250 µm / 20 µm physical via ``/ mesh_scale``.
+            Bulk / metal-surface mesh targets in **µm**. Omitted → 250 / 20.
         custom_surface_mesh : dict, optional
             Per-name surface size overrides (SurfaceMap and GapMap names)
-            in **GDS-native units** (same as explicit size kwargs).
+            in **µm**.
         refinement_radius :
-            Distance over which surface sizing grows to ``volume_mesh_size``.
-            Explicit → GDS-native; omitted → 150 µm physical via
-            ``/ mesh_scale``.
+            Distance over which surface sizing grows to ``volume_mesh_size``,
+            in **µm**. Omitted → 150.
         mesh_scale :
-            Multiplies GDS coordinates and length kwargs into mesh units.
-            Default ``1`` for µm GDS (Palace ``L0 = 1e-6``). Use
-            ``0.001`` for nm GDS (mesh stays in µm, keep ``L0 = 1e-6``).
-            Use ``1000`` only if the GDS is in mm.
+            Multiplies GDS coordinates into mesh units (µm). Default ``1``
+            for µm GDS (Palace ``L0 = 1e-6``). Use ``0.001`` for nm GDS;
+            ``1000`` for mm GDS. Does **not** rescale length kwargs.
         farfield_attr, substrate_attr, air_attr :
             Integer attributes or ``"auto"``.
         gap_map : dict, optional
@@ -953,7 +948,7 @@ class Mesh:
             MeshWell circle/arc recovery. Default ``False`` — enabling this on
             filleted GDS paths often causes OpenCASCADE wire failures.
         fuzzy_value :
-            OCC boolean fuzzy tolerance (mesh units). Default matches the
+            OCC boolean fuzzy tolerance in mesh units (µm). Default matches the
             internal polygon snap tolerance.
         """
         from .gds_mesh import mesh_gds
@@ -1880,20 +1875,24 @@ class Mesh:
         output_mesh: str | Path = "mesh_for_pyPalace.msh",
         *,
         Attributes: dict[str | tuple[int | str, str], int] | None = None,
-        substrate_thickness: float = 0.5,
-        airbox_height: float = 0.5,
-        margin: float = 0.5,
+        gap_map: dict | None = None,
+        substrate_thickness: float = 500.0,
+        airbox_height: float = 500.0,
+        margin: float = 500.0,
         margin_x: float | None = None,
         margin_y: float | None = None,
-        volume_mesh_size: float = 0.25,
-        surface_mesh_size: float = 0.02,
+        volume_mesh_size: float = 250.0,
+        surface_mesh_size: float = 20.0,
         custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
-        refinement_radius: float = 0.15,
+        refinement_radius: float = 150.0,
         mesh_scale: float = 1000.0,
         ground_plane_attr: int | str = "auto",
         farfield_attr: int | str = "auto",
         substrate_attr: int | str = "auto",
         air_attr: int | str = "auto",
+        backend: str = "meshwell",
+        auto_ground: bool = True,
+        fuzzy_value: float | None = None,
         geom_tol_factor: float = 0.01,
         enable_boundary_simplify: bool = True,
         boundary_simplify: "Mesh.BoundarySimplifySettings | None" = None,
@@ -1903,12 +1902,17 @@ class Mesh:
         simplify_smooth_angle_deg: float = 35.0,
         simplify_max_deviation: float | None = None,
     ):
-        """Generate a Palace-ready Gmsh mesh from a Quantum Metal design.
-           Only for coplanar designs.
+        """Generate a Palace-ready mesh from a Quantum Metal design.
+           Only for coplanar designs (no airbridges yet).
 
-        Polygon boundaries are simplified by default: runs of many small QM
-        edges (circles, meander bends, fillets) are merged into fewer Gmsh
-        lines/splines before imprinting.
+        Default ``backend="meshwell"`` uses the same MeshWell path as
+        :meth:`mesh_gds`: metals are auto-tagged by qgeometry name,
+        ``ground_plane`` is auto-synthesized when ``auto_ground=True``
+        (QM-only — ``mesh_gds`` never auto-grounds), and etch/gap surfaces
+        are tagged only via ``gap_map`` (same GapMap nomenclature as
+        :meth:`mesh_gds`; ``gaps`` entries are etch qgeometry names instead
+        of ``inspect_gds`` ids). Pass ``backend="gmsh"`` for the legacy
+        pure-Gmsh imprint path (useful for quality A/B checks).
 
         Parameters
         ----------
@@ -1918,37 +1922,51 @@ class Mesh:
         output_mesh:
             Path to the ``.msh`` file to write.
         Attributes:
-            Mapping from polygon row name to Palace attribute. Keys may be
+            Optional Palace attribute overrides for metal surfaces. Keys may be
             ``"name"``, ``(component_id, "name")``, or ``("component_name", "name")``.
-            Rows not in this mapping are still imprinted, but receive no explicit
-            surface physical group. Tuple-keyed surfaces are named
-            ``component_name_surface_name`` in the mesh file.
+            On the MeshWell backend, all ``subtract=False`` metals are auto-tagged
+            even when omitted here; ``Attributes`` only pins attr ids. On the
+            legacy Gmsh backend, rows not in this mapping are imprinted but
+            receive no surface physical group. Tuple-keyed surfaces are named
+            ``component_name_surface_name`` in the Gmsh mesh file.
+        gap_map:
+            MeshWell backend only. Same GapMap shape as :meth:`mesh_gds`:
+            name → ``{"gaps": [etch_name | (component, name), ...], "attr": int}``
+            (also accepts list / attr-only shorthand). Etch names are
+            ``subtract=True`` qgeometry names — the QM analogue of GDS gap ids
+            from :meth:`inspect_gds` (``gaps_only=True``). Untagged etches stay
+            untagged dielectric.
+        backend:
+            ``"meshwell"`` (default) or ``"gmsh"`` (legacy).
+        auto_ground:
+            MeshWell backend only. When True (default), synthesize a
+            ``ground_plane`` SurfaceMap entry as chip bbox minus metals/etches.
+            Ignored by ``mesh_gds`` (GDS keeps explicit ground tagging).
         substrate_thickness, airbox_height:
-            Geometry lengths in the design's units. Qiskit Metal defaults to mm.
+            Geometry lengths in **µm**. Defaults 500 / 500 (same as ``mesh_gds``).
         margin:
-            Padding added to the layout bounding box on all sides when
-            ``margin_x`` and ``margin_y`` are not set.
+            Chip padding in **µm** when ``margin_x`` / ``margin_y`` are omitted.
+            Default 500.
         margin_x, margin_y:
-            Padding in x and y added to the layout bounding box before building
-            the substrate and air box. Default to ``margin`` when omitted.
+            Chip padding in **µm**. Default to ``margin`` when omitted.
         volume_mesh_size:
-            Bulk mesh target in design units. Default is coarse; Palace AMR can
-            refine further during the solve.
+            Bulk mesh target in **µm**. Default 250; Palace AMR can refine
+            further during the solve.
         surface_mesh_size:
-            Default mesh target on circuit polygon faces (metals and etch annuli).
+            Default mesh target on circuit polygon faces in **µm**. Default 20.
         custom_surface_mesh:
-            Optional per-surface mesh size overrides keyed like ``Attributes``.
-            Special keys ``"ground_plane"`` and ``"far_field"`` may also be set;
-            when omitted, those surfaces do not drive a local refinement field
-            (bulk sizing uses ``volume_mesh_size`` away from circuit metals).
-            Unlisted surfaces use ``surface_mesh_size``.
+            Optional per-surface mesh size overrides in **µm**, keyed like
+            ``Attributes``. Special keys ``"ground_plane"`` and ``"far_field"``
+            may also be set; when omitted, those surfaces do not drive a local
+            refinement field (bulk sizing uses ``volume_mesh_size`` away from
+            circuit metals). Unlisted surfaces use ``surface_mesh_size``.
         refinement_radius:
-            Distance over which the background field grows from the local surface
-            mesh size to ``volume_mesh_size``.
+            Distance in **µm** over which the background field grows from the
+            local surface mesh size to ``volume_mesh_size``. Default 150.
         mesh_scale:
-            Multiplies all design coordinates before writing the mesh. If the
-            design is in mm and Palace uses ``L0 = 1e-6`` (one mesh unit is one
-            micron), use ``mesh_scale = 1000``.
+            Multiplies design coordinates into mesh units (µm). Default
+            ``1000`` for mm Quantum Metal designs with Palace ``L0 = 1e-6``.
+            Does **not** rescale length kwargs (those are already µm).
         ground_plane_attr, farfield_attr:
             Integer attributes or ``"auto"``. Auto assigns these after the largest
             user-provided polygon attribute.
@@ -1968,7 +1986,37 @@ class Mesh:
         simplify_smooth_angle_deg, simplify_max_deviation:
             Boundary simplification heuristics; see :class:`BoundarySimplifySettings`.
         """
-        
+        backend_norm = str(backend).strip().lower()
+        if backend_norm in ("meshwell", "mw"):
+            from .qm_mesh import mesh_quantum_metal_meshwell
+
+            return mesh_quantum_metal_meshwell(
+                design,
+                output_mesh=output_mesh,
+                Attributes=Attributes,
+                gap_map=gap_map,
+                substrate_thickness=substrate_thickness,
+                airbox_height=airbox_height,
+                margin=margin,
+                margin_x=margin_x,
+                margin_y=margin_y,
+                volume_mesh_size=volume_mesh_size,
+                surface_mesh_size=surface_mesh_size,
+                custom_surface_mesh=custom_surface_mesh,
+                refinement_radius=refinement_radius,
+                mesh_scale=mesh_scale,
+                ground_plane_attr=ground_plane_attr,
+                farfield_attr=farfield_attr,
+                substrate_attr=substrate_attr,
+                air_attr=air_attr,
+                auto_ground=auto_ground,
+                fuzzy_value=fuzzy_value,
+            )
+        if backend_norm not in ("gmsh", "legacy"):
+            raise ValueError(
+                f"backend must be 'meshwell' or 'gmsh', got {backend!r}"
+            )
+
         import gmsh
 
         if enable_boundary_simplify:
@@ -2056,31 +2104,22 @@ class Mesh:
         output_path = Path(output_mesh)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if margin_x == None:
+        if margin_x is None:
             margin_x = margin
-        if margin_y == None:
+        if margin_y is None:
             margin_y = margin
 
-        (
-            substrate_thickness,
-            airbox_height,
-            margin_x,
-            margin_y,
-            volume_mesh_size,
-            surface_mesh_size,
-            refinement_radius,
-        ) = (
-            substrate_thickness * mesh_scale,
-            airbox_height * mesh_scale,
-            margin_x * mesh_scale,
-            margin_y * mesh_scale,
-            volume_mesh_size * mesh_scale,
-            surface_mesh_size * mesh_scale,
-            refinement_radius * mesh_scale,
-        )
+        # Length kwargs are always µm (mesh units). mesh_scale only converts
+        # design coordinates (typically mm → µm with mesh_scale=1000).
+        substrate_thickness = float(substrate_thickness)
+        airbox_height = float(airbox_height)
+        margin_x = float(margin_x)
+        margin_y = float(margin_y)
+        volume_mesh_size = float(volume_mesh_size)
+        surface_mesh_size = float(surface_mesh_size)
+        refinement_radius = float(refinement_radius)
         custom_surface_mesh = {
-            key: float(value) * mesh_scale
-            for key, value in custom_surface_mesh.items()
+            key: float(value) for key, value in custom_surface_mesh.items()
         }
 
         finest_surface_mesh_size = surface_mesh_size
