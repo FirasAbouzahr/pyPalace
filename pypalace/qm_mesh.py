@@ -415,15 +415,15 @@ def mesh_quantum_metal_meshwell(
     *,
     Attributes: dict[str | tuple[int | str, str], int] | None = None,
     gap_map: dict | None = None,
-    substrate_thickness: float = 0.5,
-    airbox_height: float = 0.5,
-    margin: float = 0.5,
+    substrate_thickness: float = 500.0,
+    airbox_height: float = 500.0,
+    margin: float = 500.0,
     margin_x: float | None = None,
     margin_y: float | None = None,
-    volume_mesh_size: float = 0.25,
-    surface_mesh_size: float = 0.02,
+    volume_mesh_size: float = 250.0,
+    surface_mesh_size: float = 20.0,
     custom_surface_mesh: dict[str | tuple[int | str, str], float] | None = None,
-    refinement_radius: float = 0.15,
+    refinement_radius: float = 150.0,
     mesh_scale: float = 1000.0,
     ground_plane_attr: int | str = "auto",
     farfield_attr: int | str = "auto",
@@ -439,15 +439,29 @@ def mesh_quantum_metal_meshwell(
     Auto-tags metals by qgeometry name, synthesizes ``ground_plane`` when
     ``auto_ground=True`` (QM-only; not used by ``mesh_gds``), and tags
     etch/gaps only via ``gap_map`` (same nomenclature as ``mesh_gds``).
-    Airbridges raise ``NotImplementedError``.
+    Length kwargs are always in **µm**; ``mesh_scale`` only converts design
+    coordinates (default ``1000`` for mm → µm). Airbridges raise
+    ``NotImplementedError``.
     """
+    if float(mesh_scale) == 0.0:
+        raise ValueError("mesh_scale must be non-zero")
+    scale = float(mesh_scale)
+    # Layout builder works in design-native units (typically mm); convert
+    # µm margins → native before synthesizing the chip / ground plane.
+    margin_native = float(margin) / scale
+    margin_x_native = (
+        None if margin_x is None else float(margin_x) / scale
+    )
+    margin_y_native = (
+        None if margin_y is None else float(margin_y) / scale
+    )
     layout = build_qm_meshwell_layout(
         design,
         Attributes=Attributes,
         gap_map=gap_map,
-        margin=margin,
-        margin_x=margin_x,
-        margin_y=margin_y,
+        margin=margin_native,
+        margin_x=margin_x_native,
+        margin_y=margin_y_native,
         ground_plane_attr=ground_plane_attr,
         auto_ground=auto_ground,
     )

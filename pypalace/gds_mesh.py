@@ -11,8 +11,10 @@ This module implements the GDS path:
    named ``gap_map`` surfaces (no catch-all gap tag; QM auto-ground lives in
    :mod:`pypalace.qm_mesh`)
 
-Default units are **micrometers (µm)** with ``mesh_scale=1`` (Palace
-``L0 = 1e-6``).
+Length kwargs (substrate, airbox, margin, mesh sizes, …) are always in
+**micrometers (µm)** — Palace mesh units when ``L0 = 1e-6``. ``mesh_scale``
+only converts GDS/design coordinates into those mesh units (``1`` for µm
+GDS, ``0.001`` for nm GDS, ``1000`` for mm / Quantum Metal).
 
 Requires ``meshwell`` and ``gdstk`` (core package dependencies).
 """
@@ -918,11 +920,10 @@ def _scale_polygon(poly: Polygon, mesh_scale: float) -> Polygon:
     return shapely_scale(poly, xfact=mesh_scale, yfact=mesh_scale, origin=(0, 0))
 
 
-# Physical defaults for mesh_gds, in micrometers (Palace mesh units when
-# L0=1e-6). When the corresponding kwarg is omitted (None), it is filled as
-# default_um / mesh_scale so GDS-native kwargs still satisfy
-# value * mesh_scale ≈ default_um in the mesh file.
-_MESH_GDS_DEFAULTS_UM: dict[str, float] = {
+# Physical defaults for mesh_gds / mesh_polygons, in micrometers (Palace
+# mesh units when L0=1e-6). Length kwargs are always µm; mesh_scale only
+# converts geometry coordinates into mesh units.
+_MESH_DEFAULTS_UM: dict[str, float] = {
     "substrate_thickness": 500.0,
     "airbox_height": 500.0,
     "margin": 500.0,
@@ -930,6 +931,9 @@ _MESH_GDS_DEFAULTS_UM: dict[str, float] = {
     "surface_mesh_size": 20.0,
     "refinement_radius": 150.0,
 }
+
+# Back-compat alias (older imports / docs).
+_MESH_GDS_DEFAULTS_UM = _MESH_DEFAULTS_UM
 
 
 def mesh_polygons(
@@ -966,6 +970,10 @@ def mesh_polygons(
     callers that want QM-style ground must synthesize a ``ground_plane``
     entry in ``surface_map``).
 
+    Length kwargs (substrate, airbox, margin, mesh sizes, custom sizes,
+    refinement radius, ``airbox_height_below``) are always in **µm**.
+    ``mesh_scale`` only multiplies polygon coordinates into mesh units.
+
     ``gap_polygons``, when given, replaces the usual
     ``enumerate_gap_pieces(polygons)`` derivation (used for QM etch
     footprints). Named ``gap_map`` ids index into that list.
@@ -992,8 +1000,8 @@ def mesh_polygons(
         raise ValueError("mesh_scale must be non-zero")
 
     def _default_um(name: str, value: float | None) -> float:
-        if value == None:
-            return float(_MESH_GDS_DEFAULTS_UM[name]) / float(mesh_scale)
+        if value is None:
+            return float(_MESH_DEFAULTS_UM[name])
         return float(value)
 
     substrate_thickness = _default_um("substrate_thickness", substrate_thickness)
@@ -1002,15 +1010,16 @@ def mesh_polygons(
     volume_mesh_size = _default_um("volume_mesh_size", volume_mesh_size)
     surface_mesh_size = _default_um("surface_mesh_size", surface_mesh_size)
     refinement_radius = _default_um("refinement_radius", refinement_radius)
+    airbox_height_below = float(airbox_height_below)
 
-    if margin_x == None:
+    if margin_x is None:
         margin_x = margin
-    if margin_y == None:
+    if margin_y is None:
         margin_y = margin
-    if custom_surface_mesh == None:
+    if custom_surface_mesh is None:
         custom_surface_mesh = {}
     else:
-        # Explicit custom sizes are GDS-native, same as other length kwargs.
+        # Custom sizes are µm, same as other length kwargs.
         custom_surface_mesh = {
             str(k): float(v) for k, v in custom_surface_mesh.items()
         }
@@ -1084,10 +1093,11 @@ def mesh_polygons(
 
     # Geometry in mesh units (µm by default). Snap ~1 nm to kill micro-edges
     # that break OCC wires without collapsing real JJ-scale features.
-    snap = max(1e-3, 1e-6 * float(mesh_scale))
+    scale = float(mesh_scale)
+    snap = max(1e-3, 1e-6 * scale)
     scaled_polys: list[Any] = []
     for p in polys:
-        cleaned = _clean_polygon(_scale_polygon(p, mesh_scale), snap=snap)
+        cleaned = _clean_polygon(_scale_polygon(p, scale), snap=snap)
         if not cleaned:
             raise ValueError(
                 "A SurfaceMap polygon became empty after cleaning/scaling; "
@@ -1097,34 +1107,40 @@ def mesh_polygons(
             cleaned[0] if len(cleaned) == 1 else unary_union(cleaned)
         )
 
+    # Margins are µm → convert to native design/GDS units before the bbox,
+    # then scale the chip into mesh units with the polygons.
+    margin_x_native = float(margin_x) / scale
+    margin_y_native = float(margin_y) / scale
     chip_parts = _clean_polygon(
-        _scale_polygon(_chip_bbox(polys, float(margin_x), float(margin_y)), mesh_scale),
+        _scale_polygon(_chip_bbox(polys, margin_x_native, margin_y_native), scale),
         snap=snap,
     )
     if not chip_parts:
         raise ValueError("Failed to build chip bounding box polygon")
     chip = chip_parts[0]
 
-    z_sub = -float(substrate_thickness) * mesh_scale
-    z_air = float(airbox_height) * mesh_scale
-    z_air_below = z_sub - float(airbox_height_below) * mesh_scale
-    h_vol = float(volume_mesh_size) * mesh_scale
-    h_surf = float(surface_mesh_size) * mesh_scale
-    h_refine = float(refinement_radius) * mesh_scale
+    # Length kwargs are already µm (mesh units) — do not multiply by mesh_scale.
+    z_sub = -float(substrate_thickness)
+    z_air = float(airbox_height)
+    z_air_below = z_sub - float(airbox_height_below)
+    h_vol = float(volume_mesh_size)
+    h_surf = float(surface_mesh_size)
+    h_refine = float(refinement_radius)
 
-    # Guard against accidentally tiny sizes (e.g. old mm defaults like 0.02 on a
-    # µm GDS) which request billions of elements and hang after CAD.
+    # Guard against accidentally tiny sizes (e.g. old mm values like 0.02
+    # passed as if they were µm) which request billions of elements.
     _minx, _miny, _maxx, _maxy = chip.bounds
     chip_span = max(_maxx - _minx, _maxy - _miny, 1e-30)
     est_surf_elems = (chip_span / max(h_surf, 1e-30)) ** 2
     if est_surf_elems > 5.0e7:
         raise ValueError(
             "Mesh size is far too fine for this layout and would hang for a very "
-            f"long time (chip span ≈ {chip_span:.4g} mesh units, "
-            f"surface_mesh_size → {h_surf:.4g}, rough surface-element estimate "
+            f"long time (chip span ≈ {chip_span:.4g} µm, "
+            f"surface_mesh_size={h_surf:.4g} µm, rough surface-element estimate "
             f"~{est_surf_elems:.1e}). "
-            "mesh_gds defaults are in µm (mesh_scale=1, surface_mesh_size=20, "
-            "volume_mesh_size=250). If the GDS is in mm, pass mesh_scale=1000."
+            "Length kwargs are always in µm (defaults: surface_mesh_size=20, "
+            "volume_mesh_size=250). mesh_scale only converts geometry "
+            "(µm GDS → 1, nm GDS → 0.001, mm / Quantum Metal → 1000)."
         )
 
     # Remap footprints keep real metal holes (so trenches are not voted as
@@ -1336,7 +1352,7 @@ def mesh_polygons(
     # Same sizing path for SurfaceMap metals and named gap_map surfaces.
     resolution_specs: dict[str, list] = {}
     for name in list(ordered_names) + list(ordered_gap_names):
-        size = float(custom_surface_mesh.get(name, surface_mesh_size)) * mesh_scale
+        size = float(custom_surface_mesh.get(name, surface_mesh_size))
         specs = [ConstantInField(apply_to="surfaces", resolution=size)]
         if h_refine > 0 and size < h_vol:
             specs.append(
