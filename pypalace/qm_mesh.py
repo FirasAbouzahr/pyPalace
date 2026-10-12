@@ -213,6 +213,33 @@ def build_qm_meshwell_layout(
             entry["attr"] = int(metal_attr_hints[key])
         surface_map[key] = entry
 
+    # QM etch polys often overlap their parent metals (pocket drawings).
+    # MeshWell CAD subtracts gap pieces from every metal — trim etches so they
+    # only cover dielectric, never metal footprints.
+    metal_union = (
+        unary_union([p for parts in metal_groups.values() for p in parts])
+        if metal_groups
+        else None
+    )
+    trimmed_etches: list[Polygon] = []
+    trimmed_etch_meta: list[tuple[Any, str]] = []
+    if etch_polys and metal_union is not None and not metal_union.is_empty:
+        for poly, meta in zip(etch_polys, etch_meta):
+            diff = poly.difference(metal_union)
+            parts = [
+                p
+                for p in _flatten_polygons(diff)
+                if not p.is_empty and p.area > 0
+            ]
+            for p in parts:
+                trimmed_etches.append(p)
+                trimmed_etch_meta.append(meta)
+    else:
+        trimmed_etches = list(etch_polys)
+        trimmed_etch_meta = list(etch_meta)
+    etch_polys = trimmed_etches
+    etch_meta = trimmed_etch_meta
+
     # Explicit gap_attributes → GapMap over etch polygon list.
     gap_map: dict[str, dict] = {}
     if etch_polys and gap_attributes:
@@ -232,13 +259,15 @@ def build_qm_meshwell_layout(
         for gkey, gids in gap_groups.items():
             gap_map[gkey] = {"gaps": gids, "attr": gap_attr_hints[gkey]}
 
-    # QM-only auto ground: leftover chip after all imprints.
+    # QM-only auto ground: leftover chip after metals + (trimmed) etches.
     ground_ids: list[int] = []
     if auto_ground:
-        if not all_imprints:
+        ground_imprints = [p for parts in metal_groups.values() for p in parts]
+        ground_imprints.extend(etch_polys)
+        if not ground_imprints:
             raise ValueError("Cannot build ground_plane: no imprint polygons")
-        chip = _chip_bbox(all_imprints, float(margin_x), float(margin_y))
-        imprint_union = unary_union(all_imprints)
+        chip = _chip_bbox(ground_imprints, float(margin_x), float(margin_y))
+        imprint_union = unary_union(ground_imprints)
         ground_geom = chip.difference(imprint_union)
         ground_parts = [
             p for p in _flatten_polygons(ground_geom) if not p.is_empty and p.area > 0
