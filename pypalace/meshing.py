@@ -861,33 +861,6 @@ class Mesh:
         return validate_gap_map(gap_map, n_gaps=n_gaps)
 
     @staticmethod
-    def compare_qm_mesh_backends(
-        design: Any,
-        output_dir: str | Path = "/tmp/qm_mesh_compare",
-        *,
-        Attributes: dict | None = None,
-        surface_mesh_size: float = 0.02,
-        volume_mesh_size: float = 0.25,
-        mesh_scale: float = 1000.0,
-        **kwargs,
-    ):
-        """
-        Mesh one Quantum Metal design with both ``gmsh`` and ``meshwell``
-        backends and compare :meth:`mesh_quality` (Palace-style κ / h).
-        """
-        from .qm_mesh import compare_qm_mesh_backends
-
-        return compare_qm_mesh_backends(
-            design,
-            output_dir=output_dir,
-            Attributes=Attributes,
-            surface_mesh_size=surface_mesh_size,
-            volume_mesh_size=volume_mesh_size,
-            mesh_scale=mesh_scale,
-            **kwargs,
-        )
-
-    @staticmethod
     def mesh_gds(
         gds_file: str | Path,
         surface_map: dict,
