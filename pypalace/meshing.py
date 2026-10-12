@@ -1880,7 +1880,7 @@ class Mesh:
         output_mesh: str | Path = "mesh_for_pyPalace.msh",
         *,
         Attributes: dict[str | tuple[int | str, str], int] | None = None,
-        gap_attributes: dict[str | tuple[int | str, str], int] | None = None,
+        gap_map: dict | None = None,
         substrate_thickness: float = 0.5,
         airbox_height: float = 0.5,
         margin: float = 0.5,
@@ -1914,8 +1914,10 @@ class Mesh:
         :meth:`mesh_gds`: metals are auto-tagged by qgeometry name,
         ``ground_plane`` is auto-synthesized when ``auto_ground=True``
         (QM-only — ``mesh_gds`` never auto-grounds), and etch/gap surfaces
-        are tagged only via ``gap_attributes``. Pass ``backend="gmsh"`` for
-        the legacy pure-Gmsh imprint path (useful for quality A/B checks).
+        are tagged only via ``gap_map`` (same GapMap nomenclature as
+        :meth:`mesh_gds`; ``gaps`` entries are etch qgeometry names instead
+        of ``inspect_gds`` ids). Pass ``backend="gmsh"`` for the legacy
+        pure-Gmsh imprint path (useful for quality A/B checks).
 
         Parameters
         ----------
@@ -1932,10 +1934,13 @@ class Mesh:
             legacy Gmsh backend, rows not in this mapping are imprinted but
             receive no surface physical group. Tuple-keyed surfaces are named
             ``component_name_surface_name`` in the Gmsh mesh file.
-        gap_attributes:
-            MeshWell backend only. Optional name→attr map for ``subtract=True``
-            etch/gap rows (same key styles as ``Attributes``). Untagged etches
-            stay untagged dielectric.
+        gap_map:
+            MeshWell backend only. Same GapMap shape as :meth:`mesh_gds`:
+            name → ``{"gaps": [etch_name | (component, name), ...], "attr": int}``
+            (also accepts list / attr-only shorthand). Etch names are
+            ``subtract=True`` qgeometry names — the QM analogue of GDS gap ids
+            from :meth:`inspect_gds` (``gaps_only=True``). Untagged etches stay
+            untagged dielectric.
         backend:
             ``"meshwell"`` (default) or ``"gmsh"`` (legacy).
         auto_ground:
@@ -1995,7 +2000,7 @@ class Mesh:
                 design,
                 output_mesh=output_mesh,
                 Attributes=Attributes,
-                gap_attributes=gap_attributes,
+                gap_map=gap_map,
                 substrate_thickness=substrate_thickness,
                 airbox_height=airbox_height,
                 margin=margin,

@@ -13,6 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
@@ -97,11 +98,114 @@ def _lookup_attr(
     return int(value)
 
 
+def _etch_ref_matches(
+    ref: Any,
+    component: Any,
+    surface_name: str,
+    id_to_name: dict[int, str],
+) -> bool:
+    """Whether a GapMap ``gaps`` entry refers to this QM etch row."""
+    from .meshing import Mesh
+
+    if isinstance(ref, str):
+        return ref == surface_name
+    if isinstance(ref, tuple) and len(ref) == 2:
+        # Reuse Attributes-style (comp_id|comp_name, surface_name) keys.
+        value, key = Mesh._lookup_qm_surface_key(
+            {ref: True}, component, surface_name, id_to_name
+        )
+        return key is not None
+    return False
+
+
+def _normalize_qm_gap_map(
+    gap_map: Mapping[Any, Any] | None,
+    etch_meta: list[tuple[Any, str]],
+    id_to_name: dict[int, str],
+) -> dict[str, dict]:
+    """
+    Normalize a QM ``gap_map`` into the same shape as GDS GapMap:
+
+    ``{palace_name: {"gaps": [etch_poly_index, ...], "attr": int|None}}``.
+
+    User-facing ``gaps`` entries are qgeometry names (or Attributes-style
+    ``(component, name)`` tuples) for ``subtract=True`` rows — the QM
+    analogue of GDS gap ids from ``inspect_gds(gaps_only=True)``.
+
+    Accepted entry forms (parallel to :func:`validate_gap_map`):
+
+    - ``{"gaps": ["cross_etch", ...], "attr": 10}``
+    - ``["cross_etch", ...]`` (attr auto later)
+    - ``{"attr": 10}`` — shorthand: ``gaps`` defaults to ``[palace_name]``
+    - ``10`` — shorthand: attr only, ``gaps=[palace_name]``
+    """
+    if not gap_map:
+        return {}
+    if not etch_meta:
+        raise ValueError(
+            "gap_map was provided but this design has no subtract=True "
+            "(etch/gap) qgeometry to tag"
+        )
+
+    out: dict[str, dict] = {}
+    for name, entry in gap_map.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"GapMap keys must be non-empty strings, got {name!r}")
+
+        if isinstance(entry, (int, np.integer)):
+            gap_refs: list[Any] = [name]
+            attr: int | None = int(entry)
+        elif isinstance(entry, (list, tuple, set)):
+            gap_refs = list(entry)
+            attr = None
+        elif isinstance(entry, dict):
+            attr_raw = entry.get("attr", None)
+            attr = int(attr_raw) if attr_raw is not None else None
+            if "gaps" in entry:
+                gaps = entry["gaps"]
+                if isinstance(gaps, (str, tuple)):
+                    gap_refs = [gaps]
+                else:
+                    gap_refs = list(gaps)
+            else:
+                # Shorthand: palace name is the etch qgeometry name.
+                gap_refs = [name]
+        else:
+            raise ValueError(
+                f"GapMap[{name!r}] must be a dict, list of etch names, or attr int "
+                "(same nomenclature as mesh_gds GapMap, with etch names instead "
+                "of inspect_gds gap ids)"
+            )
+
+        if not gap_refs:
+            raise ValueError(f"GapMap[{name!r}] has empty gaps list")
+
+        gids: list[int] = []
+        for ref in gap_refs:
+            matched = [
+                gid
+                for gid, (comp, sname) in enumerate(etch_meta)
+                if _etch_ref_matches(ref, comp, sname, id_to_name)
+            ]
+            if not matched:
+                raise ValueError(
+                    f"GapMap[{name!r}] gaps entry {ref!r} matched no "
+                    f"subtract=True qgeometry (known etches: "
+                    f"{sorted({n for _, n in etch_meta})})"
+                )
+            for gid in matched:
+                if gid not in gids:
+                    gids.append(gid)
+
+        out[name] = {"gaps": gids, "attr": attr}
+    return out
+
+
 def build_qm_meshwell_layout(
     design: Any,
     *,
     Attributes: dict[str | tuple[int | str, str], int] | None = None,
-    gap_attributes: dict[str | tuple[int | str, str], int] | None = None,
+    gap_map: dict | None = None,
     margin: float = 0.5,
     margin_x: float | None = None,
     margin_y: float | None = None,
@@ -114,8 +218,10 @@ def build_qm_meshwell_layout(
     - Metals (``subtract=False``): auto SurfaceMap by qgeometry **name**
       (disambiguated with component name on collision). ``Attributes``
       overrides Palace attr ids when provided.
-    - Gaps / etch (``subtract=True``): only tagged when listed in
-      ``gap_attributes``; otherwise CAD-only dielectric carvers.
+    - Gaps / etch (``subtract=True``): tagged only via ``gap_map`` (same
+      nomenclature as :func:`mesh_gds` GapMap; ``gaps`` entries are etch
+      qgeometry names instead of ``inspect_gds`` ids). Untagged etches stay
+      CAD-only dielectric carvers.
     - ``ground_plane``: when ``auto_ground`` (QM default), synthesized as
       ``chip_bbox − metals − etches`` and added to the SurfaceMap.
       GDS ``mesh_gds`` does **not** use this helper — no auto ground there.
@@ -148,7 +254,7 @@ def build_qm_meshwell_layout(
 
     id_to_name = _component_id_to_name(design)
     Attributes = dict(Attributes or {})
-    gap_attributes = dict(gap_attributes or {})
+    gap_map_in = dict(gap_map or {})
 
     metal_groups: dict[str, list[Polygon]] = defaultdict(list)
     metal_attr_hints: dict[str, int] = {}
@@ -240,24 +346,8 @@ def build_qm_meshwell_layout(
     etch_polys = trimmed_etches
     etch_meta = trimmed_etch_meta
 
-    # Explicit gap_attributes → GapMap over etch polygon list.
-    gap_map: dict[str, dict] = {}
-    if etch_polys and gap_attributes:
-        # group etch indices by resolved gap name
-        gap_groups: dict[str, list[int]] = defaultdict(list)
-        gap_attr_hints: dict[str, int] = {}
-        for gid, (component, name) in enumerate(etch_meta):
-            attr = _lookup_attr(gap_attributes, component, name, id_to_name)
-            if attr is None:
-                continue
-            comp_name = id_to_name.get(int(component), str(component))
-            # prefer geometry name; disambiguate like metals
-            etch_name_count = sum(1 for _, n in etch_meta if n == name)
-            gkey = f"{comp_name}_{name}" if etch_name_count > 1 else name
-            gap_groups[gkey].append(gid)
-            gap_attr_hints[gkey] = int(attr)
-        for gkey, gids in gap_groups.items():
-            gap_map[gkey] = {"gaps": gids, "attr": gap_attr_hints[gkey]}
+    # User gap_map (etch names) → integer-id GapMap over etch polygon list.
+    gap_map = _normalize_qm_gap_map(gap_map_in, etch_meta, id_to_name)
 
     # QM-only auto ground: leftover chip after metals + (trimmed) etches.
     ground_ids: list[int] = []
@@ -324,7 +414,7 @@ def mesh_quantum_metal_meshwell(
     output_mesh: str | Path = "mesh_for_pyPalace.msh",
     *,
     Attributes: dict[str | tuple[int | str, str], int] | None = None,
-    gap_attributes: dict[str | tuple[int | str, str], int] | None = None,
+    gap_map: dict | None = None,
     substrate_thickness: float = 0.5,
     airbox_height: float = 0.5,
     margin: float = 0.5,
@@ -347,14 +437,14 @@ def mesh_quantum_metal_meshwell(
     Mesh a Quantum Metal design with the MeshWell backend.
 
     Auto-tags metals by qgeometry name, synthesizes ``ground_plane`` when
-    ``auto_ground=True`` (QM-only; not used by ``mesh_gds``), and leaves
-    etch/gap tagging to ``gap_attributes``. Airbridges raise
-    ``NotImplementedError``.
+    ``auto_ground=True`` (QM-only; not used by ``mesh_gds``), and tags
+    etch/gaps only via ``gap_map`` (same nomenclature as ``mesh_gds``).
+    Airbridges raise ``NotImplementedError``.
     """
     layout = build_qm_meshwell_layout(
         design,
         Attributes=Attributes,
-        gap_attributes=gap_attributes,
+        gap_map=gap_map,
         margin=margin,
         margin_x=margin_x,
         margin_y=margin_y,
