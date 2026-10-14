@@ -491,18 +491,30 @@ def validate_surface_map(
     return normalized
 
 
-def assign_missing_attrs(surface_map: dict[str, dict], start: int = 1) -> dict[str, dict]:
-    """Fill missing ``attr`` values with the next free positive integers."""
-    used = {v["attr"] for v in surface_map.values() if v["attr"] != None}
+def assign_missing_attrs(
+    surface_map: dict[str, dict],
+    start: int = 1,
+    *,
+    used: set[int] | None = None,
+) -> dict[str, dict]:
+    """Fill missing ``attr`` values with the next free positive integers.
+
+    ``used`` may seed ids that are already taken outside this map (e.g.
+    substrate / air / far_field) so auto-filled attrs skip them.
+    """
+    taken = {int(a) for a in (used or ())}
+    taken |= {
+        int(v["attr"]) for v in surface_map.values() if v["attr"] is not None
+    }
     next_attr = int(start)
     out = {}
     for name, entry in surface_map.items():
         attr = entry["attr"]
-        if attr == None:
-            while next_attr in used:
+        if attr is None:
+            while next_attr in taken:
                 next_attr += 1
             attr = next_attr
-            used.add(attr)
+            taken.add(attr)
             next_attr += 1
         # Preserve polygons- or gaps-based maps.
         out_entry = {"attr": int(attr)}
@@ -1043,10 +1055,32 @@ def mesh_polygons(
         reserved_names=set(smap.keys()),
     )
 
-    # Auto volume / far_field attrs after user surface attrs.
-    max_user = max(v["attr"] for v in smap.values())
+    # Attribute order:
+    #   1) SurfaceMap metals (user / auto)
+    #   2) explicitly labeled GapMap attrs (if any)
+    #   3) auto substrate / air / far_field after max(metals, labeled gaps);
+    #      if no gap attrs are set, after metals only
+    #   4) unlabeled GapMap entries auto-filled after far_field
+    metal_attrs = {int(v["attr"]) for v in smap.values()}
+    max_metal = max(metal_attrs) if metal_attrs else 0
+    explicit_gap_attrs = {
+        int(entry["attr"])
+        for entry in gmap.values()
+        if entry.get("attr") is not None
+    }
+    for attr in explicit_gap_attrs:
+        if attr in metal_attrs:
+            raise ValueError(
+                f"GapMap attr={attr} collides with a SurfaceMap attribute"
+            )
+    auto_base = (
+        max(max_metal, max(explicit_gap_attrs))
+        if explicit_gap_attrs
+        else max_metal
+    )
+
     if substrate_attr == "auto":
-        substrate_attr = max_user + 1
+        substrate_attr = int(auto_base) + 1
     else:
         substrate_attr = int(substrate_attr)
     if air_attr == "auto":
@@ -1059,36 +1093,38 @@ def mesh_polygons(
         farfield_attr = int(farfield_attr)
 
     reserved = {
-        "substrate": substrate_attr,
-        "air": air_attr,
-        "far_field": farfield_attr,
+        "substrate": int(substrate_attr),
+        "air": int(air_attr),
+        "far_field": int(farfield_attr),
     }
+    reserved_attr_set = set(reserved.values())
     for name, entry in smap.items():
         for rname, rattr in reserved.items():
-            if entry["attr"] == rattr:
+            if int(entry["attr"]) == rattr:
                 raise ValueError(
                     f"SurfaceMap[{name!r}] attr={rattr} collides with auto-tagged {rname!r}"
                 )
-
-    # Named gap attrs: keep explicit ones, auto-fill after far_field.
-    used_attrs = {int(v["attr"]) for v in smap.values()} | set(reserved.values())
-    for name, entry in gmap.items():
-        attr = entry["attr"]
-        if attr != None:
-            if int(attr) in used_attrs:
+    for attr in explicit_gap_attrs:
+        for rname, rattr in reserved.items():
+            if attr == rattr:
                 raise ValueError(
-                    f"GapMap[{name!r}] attr={attr} collides with an existing attribute"
+                    f"GapMap attr={attr} collides with auto-tagged {rname!r}"
                 )
-            used_attrs.add(int(attr))
-    gmap = assign_missing_attrs(gmap, start=int(farfield_attr) + 1)
+
+    gmap = assign_missing_attrs(
+        gmap,
+        start=int(farfield_attr) + 1,
+        used=metal_attrs | reserved_attr_set,
+    )
     for name, entry in gmap.items():
-        if int(entry["attr"]) in reserved.values():
+        attr = int(entry["attr"])
+        if attr in metal_attrs:
             raise ValueError(
-                f"GapMap[{name!r}] attr={entry['attr']} collides with a reserved attribute"
+                f"GapMap[{name!r}] attr={attr} collides with a SurfaceMap attribute"
             )
-        if int(entry["attr"]) in {int(v["attr"]) for v in smap.values()}:
+        if attr in reserved_attr_set:
             raise ValueError(
-                f"GapMap[{name!r}] attr={entry['attr']} collides with a SurfaceMap attribute"
+                f"GapMap[{name!r}] attr={attr} collides with a reserved attribute"
             )
 
     # Geometry in mesh units (µm by default). Snap ~1 nm to kill micro-edges

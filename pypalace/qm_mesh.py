@@ -508,13 +508,26 @@ def mesh_quantum_metal_meshwell(
                 custom_out[key] = float(size)
 
     smap = dict(layout["surface_map"])
-    # Legacy QM attr order: metals → substrate → air → ground_plane → far_field
+    # Attr order (same as mesh_gds): metals → labeled gaps → substrate / air /
+    # ground_plane / far_field → unlabeled gaps. If no gap attrs, volumes
+    # follow metals only.
     max_metal = max(
         (int(smap[k]["attr"]) for k in layout["metal_keys"]),
         default=0,
     )
+    gmap = dict(layout["gap_map"] or {})
+    explicit_gap_attrs = {
+        int(entry["attr"])
+        for entry in gmap.values()
+        if entry.get("attr") is not None
+    }
+    auto_base = (
+        max(max_metal, max(explicit_gap_attrs))
+        if explicit_gap_attrs
+        else max_metal
+    )
     if substrate_attr == "auto":
-        substrate_attr = max_metal + 1
+        substrate_attr = int(auto_base) + 1
     else:
         substrate_attr = int(substrate_attr)
     if air_attr == "auto":
@@ -536,9 +549,20 @@ def mesh_quantum_metal_meshwell(
     elif farfield_attr == "auto":
         farfield_attr = int(air_attr) + 1
 
-    gmap = dict(layout["gap_map"] or {})
     if gmap:
-        gmap = assign_missing_attrs(gmap, start=int(farfield_attr) + 1)
+        metal_attrs = {int(smap[k]["attr"]) for k in layout["metal_keys"]}
+        reserved = {
+            int(substrate_attr),
+            int(air_attr),
+            int(farfield_attr),
+        }
+        if layout["ground_ids"]:
+            reserved.add(int(smap["ground_plane"]["attr"]))
+        gmap = assign_missing_attrs(
+            gmap,
+            start=int(farfield_attr) + 1,
+            used=metal_attrs | reserved,
+        )
 
     # Chip / ground already includes margin → do not pad again.
     return mesh_polygons(

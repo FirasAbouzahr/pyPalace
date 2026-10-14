@@ -943,7 +943,10 @@ class Mesh:
             Optional name → ``{"gaps": [gap_id, ...], "attr": int}``. Gap ids
             from :meth:`inspect_gds` (``gaps_only=True``) — interior voids
             only; independent of ``margin_*``. Omitted / empty → metals only;
-            unmapped trenches stay untagged.
+            unmapped trenches stay untagged. When gap entries set ``attr``,
+            auto ``substrate`` / ``air`` / ``far_field`` ids follow those
+            labeled gaps; otherwise they follow SurfaceMap metals only, and
+            unlabeled gaps fill in after ``far_field``.
         identify_arcs :
             MeshWell circle/arc recovery. Default ``False`` — enabling this on
             filleted GDS paths often causes OpenCASCADE wire failures.
