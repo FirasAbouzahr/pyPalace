@@ -405,10 +405,17 @@ def validate_surface_map(
     Accepted forms per entry:
 
     - ``{"polygons": [0, 1], "attr": 3}``
+    - ``{"polygons": [0, 1], "attr": 3, "union": True}``
     - ``{"polygons": 0, "attr": 3}``
     - ``[0, 1]`` (attr auto-assigned later by caller if missing)
 
-    Returns a normalized ``{name: {"polygons": [int, ...], "attr": int|None}}``.
+    ``union=True`` (dict entries only) Shapely-merges those polygon ids
+    into as few faces as possible before MeshWell (touching bank pieces
+    become one ground face). Default ``False`` keeps one PolySurface per
+    piece so intentionally disjoint metals stay separate.
+
+    Returns a normalized
+    ``{name: {"polygons": [int, ...], "attr": int|None, "union": bool}}``.
     """
     if not isinstance(surface_map, dict) or len(surface_map) == 0:
         raise ValueError("surface_map must be a non-empty dict of name → tagging entry")
@@ -434,6 +441,7 @@ def validate_surface_map(
                 "dielectric_gap/z0_background are internal)"
             )
 
+        union = False
         if isinstance(entry, (list, tuple, set)):
             poly_ids = list(entry)
             attr = None
@@ -448,8 +456,10 @@ def validate_surface_map(
             else:
                 poly_ids = list(polys)
             attr = entry.get("attr", None)
-            if attr != None:
+            if attr is not None:
                 attr = int(attr)
+            if "union" in entry:
+                union = bool(entry["union"])
         else:
             raise ValueError(
                 f"SurfaceMap[{name!r}] must be a dict or list of polygon ids"
@@ -461,7 +471,7 @@ def validate_surface_map(
         clean_ids = []
         for pid in poly_ids:
             pid = int(pid)
-            if n_polygons != None and (pid < 0 or pid >= n_polygons):
+            if n_polygons is not None and (pid < 0 or pid >= n_polygons):
                 raise ValueError(
                     f"SurfaceMap[{name!r}] polygon id {pid} out of range "
                     f"[0, {n_polygons - 1}]"
@@ -474,7 +484,7 @@ def validate_surface_map(
             used_polys[pid] = name
             clean_ids.append(pid)
 
-        if attr != None:
+        if attr is not None:
             if attr <= 0:
                 raise ValueError(
                     f"SurfaceMap[{name!r}] attr must be a positive integer"
@@ -486,7 +496,11 @@ def validate_surface_map(
                 )
             used_attrs[attr] = name
 
-        normalized[name] = {"polygons": clean_ids, "attr": attr}
+        normalized[name] = {
+            "polygons": clean_ids,
+            "attr": attr,
+            "union": bool(union),
+        }
 
     return normalized
 
@@ -516,12 +530,14 @@ def assign_missing_attrs(
             attr = next_attr
             taken.add(attr)
             next_attr += 1
-        # Preserve polygons- or gaps-based maps.
+        # Preserve polygons- or gaps-based maps (+ optional SurfaceMap union).
         out_entry = {"attr": int(attr)}
         if "polygons" in entry:
             out_entry["polygons"] = list(entry["polygons"])
         if "gaps" in entry:
             out_entry["gaps"] = list(entry["gaps"])
+        if "union" in entry:
+            out_entry["union"] = bool(entry["union"])
         out[name] = out_entry
     return out
 
@@ -1182,10 +1198,12 @@ def mesh_polygons(
     # Remap footprints keep real metal holes (so trenches are not voted as
     # metal). CAD metals are exterior-only per piece: holed grounds otherwise
     # dangle off the substrate/air interface and miss custom_surface_mesh.
-    # MultiPolygon SurfaceMap entries are one PolySurface per piece (shared
-    # physical_name) for the same reason. Every interior gap piece joins the
-    # nest as a carver (named gap_map → sizing/tags; unnamed → CAD-only
-    # z0_gap_cad_* left untagged). z0_background is the highest surface order.
+    # Default: one PolySurface per piece (shared physical_name). Opt-in
+    # SurfaceMap ``union=True`` Shapely-merges touching pieces first so
+    # meander-flank ground banks become one face (still-disjoint components
+    # stay separate). Every interior gap piece joins the nest as a carver
+    # (named gap_map → sizing/tags; unnamed → CAD-only z0_gap_cad_*).
+    # z0_background is the highest surface order.
     name_geoms: dict[str, Any] = {}
     metal_pieces_cad: list[tuple[str, Polygon]] = []
     for name, entry in smap.items():
@@ -1199,6 +1217,23 @@ def mesh_polygons(
             cleaned_parts.extend(_clean_polygon(part, snap=snap))
         if not cleaned_parts:
             raise ValueError(f"SurfaceMap[{name!r}] became empty after cleaning")
+
+        if bool(entry.get("union", False)) and len(cleaned_parts) > 1:
+            n_before = len(cleaned_parts)
+            merged = unary_union(cleaned_parts)
+            unioned: list[Polygon] = []
+            for part in _flatten_polygons(merged):
+                unioned.extend(_clean_polygon(part, snap=snap))
+            if not unioned:
+                raise ValueError(
+                    f"SurfaceMap[{name!r}] became empty after union=True merge"
+                )
+            cleaned_parts = unioned
+            print(
+                f"SurfaceMap[{name!r}] union=True: {n_before} pieces → "
+                f"{len(cleaned_parts)} after Shapely merge"
+            )
+
         name_geoms[name] = (
             cleaned_parts[0]
             if len(cleaned_parts) == 1

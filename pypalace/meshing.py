@@ -830,7 +830,9 @@ class Mesh:
         surface_map : dict
             Mapping of surface name → ``{"polygons": [...], "attr": int}``
             or a bare list of polygon ids (attrs auto-assigned in
-            :meth:`mesh_gds`).
+            :meth:`mesh_gds`). Optional ``"union": True`` Shapely-merges
+            that entry's pieces before meshing (default keeps per-piece
+            PolySurfaces for disjoint metals).
         n_polygons : int, optional
             If given, check polygon ids are in ``[0, n_polygons)``.
 
@@ -907,8 +909,10 @@ class Mesh:
         gds_file : str or Path
             Path to a ``.gds`` file.
         surface_map : dict
-            Name → ``{"polygons": [poly_id, ...], "attr": int}``. Polygon ids
-            come from :meth:`inspect_gds`. Reserved names: ``substrate``,
+            Name → ``{"polygons": [poly_id, ...], "attr": int}``. Optional
+            ``"union": True`` Shapely-merges that entry's pieces (default
+            keeps one PolySurface per piece for disjoint metals). Polygon
+            ids come from :meth:`inspect_gds`. Reserved names: ``substrate``,
             ``air``, ``far_field``.
         output_mesh : str or Path
             Output ``.msh`` path (Gmsh MSH 2.2 ASCII — required by Palace/MFEM).
