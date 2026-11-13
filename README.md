@@ -21,6 +21,16 @@ For questions, comments, or collaboration, contact:
 pip install pypalace
 ```
 
+Optional **GDS tagging GUI** (Streamlit):
+
+```bash
+pip install 'pypalace[gui]'
+pypalace-gui
+# or: python -m pypalace.gui
+```
+
+Import a GDS, tag metals and gaps on one canvas (with optional `union` for fragmented grounds), then download SurfaceMap/GapMap JSON plus a runnable `mesh_gds` script.
+
 ### For developers
 
 Clone the repository:
@@ -29,6 +39,9 @@ Clone the repository:
 git clone https://github.com/FirasAbouzahr/pyPalace.git
 cd pyPalace
 pip install -e .
+# GUI:
+pip install -e '.[gui]'
+pypalace-gui
 ```
 
 ---
