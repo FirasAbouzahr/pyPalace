@@ -24,11 +24,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = [
+    "streamlit>=1.32",
+    "plotly>=5.18",
+]
 dev = [
     "pytest",
     "black",
     "ruff"
 ]
+
+[project.scripts]
+pypalace-gui = "pypalace.gui.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/FirasAbouzahr/pyPalace"

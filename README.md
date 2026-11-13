@@ -21,6 +21,16 @@ For questions, comments, or collaboration, contact:
 pip install pypalace
 ```
 
+Optional **GDS tagging GUI** (Streamlit):
+
+```bash
+pip install 'pypalace[gui]'
+pypalace-gui
+# or: python -m pypalace.gui
+```
+
+**Geometry** tab: import GDS, click-tag metals/gaps (`inspect_gds`-style labels), draw lumped ports, mesh, export maps/script. **Simulation** tab: Palace BCs, config JSON, run.
+
 ### For developers
 
 Clone the repository:
@@ -29,6 +39,9 @@ Clone the repository:
 git clone https://github.com/FirasAbouzahr/pyPalace.git
 cd pyPalace
 pip install -e .
+# GUI:
+pip install -e '.[gui]'
+pypalace-gui
 ```
 
 ---
