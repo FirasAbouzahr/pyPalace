@@ -19,7 +19,27 @@ From a clone:
 
 ```bash
 pip install -e '.[gui]'
-python -m pypalace.gui
+python3 -m pypalace.gui
 ```
 
 Opens a local Streamlit page in your browser (default http://localhost:8501).
+
+### macOS tip (CadQuery / `nlopt` pip fights)
+
+Tagging in the GUI only needs `gdstk` + Streamlit — not a full MeshWell/CadQuery stack.
+If `pip install -e '.[gui]'` dies while building `nlopt`, skip the dependency resolve:
+
+```bash
+cd ~/pyPalace
+git pull origin cursor/gui-gds-tagger-92d0
+
+pip install streamlit plotly
+pip install -e . --no-deps
+python3 -m pypalace.gui
+```
+
+For actual meshing later, install MeshWell/CadQuery via **conda** (recommended) or pin wheels before pip:
+
+```bash
+pip install 'nlopt>=2.9' 'cadquery==2.8.0' meshwell
+```

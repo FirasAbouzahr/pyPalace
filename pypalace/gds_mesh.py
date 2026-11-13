@@ -31,6 +31,17 @@ from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 
+def _require_gdstk():
+    """Import gdstk for GDS read/inspect (no MeshWell needed)."""
+    try:
+        import gdstk
+    except ImportError as e:
+        raise ImportError(
+            "GDS I/O requires 'gdstk'. Reinstall pypalace (or: pip install gdstk)."
+        ) from e
+    return gdstk
+
+
 def _require_meshwell():
     try:
         import gdstk  # noqa: F401
@@ -269,7 +280,7 @@ def normalize_gds_layers(layers: Any) -> list[tuple[int, int]]:
 
 def _open_gds_cell(gds_file: str | Path, cell_name: str | None = None):
     """Read a GDS and return the selected cell (top-level if ``cell_name`` omitted)."""
-    import gdstk
+    gdstk = _require_gdstk()
 
     library = gdstk.read_gds(str(gds_file))
     if cell_name:
@@ -311,7 +322,7 @@ def resolve_gds_layers(
     ``None`` → every ``(layer, datatype)`` present on the cell (sorted).
     Otherwise → :func:`normalize_gds_layers`.
     """
-    _require_meshwell()
+    _require_gdstk()
     if layers is None:
         return discover_gds_layers(_open_gds_cell(gds_file, cell_name))
     return normalize_gds_layers(layers)
@@ -342,8 +353,8 @@ def load_gds_polygons(
     """
     from shapely.geometry import Polygon as ShapelyPolygon
 
-    # Ensure meshwell/gdstk are importable early for a clear error message.
-    _require_meshwell()
+    # GDS load/inspect only needs gdstk (+ shapely); MeshWell is for meshing.
+    _require_gdstk()
 
     cell = _open_gds_cell(gds_file, cell_name)
     layer_list = (
