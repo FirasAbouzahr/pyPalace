@@ -29,7 +29,7 @@ pypalace-gui
 # or: python -m pypalace.gui
 ```
 
-Import a GDS, tag metals and gaps on one canvas (with optional `union` for fragmented grounds), then download SurfaceMap/GapMap JSON plus a runnable `mesh_gds` script.
+**Geometry** tab: import GDS, click-tag metals/gaps (`inspect_gds`-style labels), draw lumped ports, mesh, export maps/script. **Simulation** tab: Palace BCs, config JSON, run.
 
 ### For developers
 
