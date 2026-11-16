@@ -791,6 +791,9 @@ class Mesh:
         gaps_only: bool = False,
         zoom_to_polygons: list[int] | int | None = None,
         crop: tuple | None = None,
+        clip=None,
+        clip_to_polygons=None,
+        clip_pad: float = 0.0,
         show: bool = True,
         save: str | Path | None = None,
     ):
@@ -805,6 +808,11 @@ class Mesh:
         ``layers``: sequence of GDS ``(layer, datatype)`` pairs merged onto
         one plane, or ``None`` (default) for **all** layers in the cell.
         Match :meth:`mesh_gds`.
+
+        ``clip`` / ``clip_to_polygons`` hard-trim metals (layout coords)
+        before labeling — drop oversized ground, then read new ``p*`` ids.
+        Prefer ``clip_to_polygons`` + generous ``clip_pad``. ``crop`` only
+        zooms the viewport.
         """
         from .gds_mesh import inspect_gds
 
@@ -816,9 +824,32 @@ class Mesh:
             gaps_only=gaps_only,
             zoom_to_polygons=zoom_to_polygons,
             crop=crop,
+            clip=clip,
+            clip_to_polygons=clip_to_polygons,
+            clip_pad=clip_pad,
             show=show,
             save=save,
         )
+
+    @staticmethod
+    def clip_polygons(polygons, clip):
+        """Hard-clip metals to a layout-coordinate window.
+
+        See :func:`pypalace.gds_mesh.clip_polygons`.
+        """
+        from .gds_mesh import clip_polygons
+
+        return clip_polygons(polygons, clip)
+
+    @staticmethod
+    def clip_window_from_polygons(polygons, poly_ids=None, *, pad: float = 0.0):
+        """BBox of selected polygons (+ pad) as a clip window.
+
+        See :func:`pypalace.gds_mesh.clip_window_from_polygons`.
+        """
+        from .gds_mesh import clip_window_from_polygons
+
+        return clip_window_from_polygons(polygons, poly_ids, pad=pad)
 
     @staticmethod
     def SurfaceMap(surface_map: dict, n_polygons: int | None = None) -> dict:
@@ -887,6 +918,9 @@ class Mesh:
         gap_map: dict | None = None,
         identify_arcs: bool = False,
         fuzzy_value: float | None = None,
+        clip=None,
+        clip_to_polygons=None,
+        clip_pad: float = 0.0,
     ):
         """
         Mesh a GDS layout with MeshWell for Palace.
@@ -957,6 +991,17 @@ class Mesh:
         fuzzy_value :
             OCC boolean fuzzy tolerance in mesh units (µm). Default matches the
             internal polygon snap tolerance.
+        clip :
+            Optional layout-coordinate window; hard Shapely-intersects metals
+            before meshing. Forms: ``(xmin, ymin, xmax, ymax)``,
+            ``((cx, cy), span)``, or ``((cx, cy), (span_x, span_y))``.
+            Match :meth:`inspect_gds`.
+        clip_to_polygons :
+            Preferred alternative: window = bbox of these **pre-clip** ``p*``
+            ids from a full-chip inspect, plus ``clip_pad``.
+        clip_pad :
+            Extra pad around ``clip_to_polygons`` in layout/GDS units. Pad
+            generously so cuts land in boring ground.
         """
         from .gds_mesh import mesh_gds
 
@@ -983,6 +1028,9 @@ class Mesh:
             gap_map=gap_map,
             identify_arcs=identify_arcs,
             fuzzy_value=fuzzy_value,
+            clip=clip,
+            clip_to_polygons=clip_to_polygons,
+            clip_pad=clip_pad,
         )
 
     @staticmethod

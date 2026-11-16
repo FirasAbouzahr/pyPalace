@@ -4,9 +4,11 @@ GDS inspection and MeshWell-backed meshing for Palace workflows.
 This module implements the GDS path:
 
 1. :func:`inspect_gds` — plot metal ``p*`` or gap ``g*`` ids (``gaps_only``)
-2. :func:`validate_surface_map` / SurfaceMap — name → polygon ids + attr
-3. Optional :func:`validate_gap_map` / GapMap — name → gap ids + attr
-4. :func:`mesh_polygons` / :func:`mesh_gds` — MeshWell CAD/mesh with auto
+2. Optional ``clip`` / :func:`clip_polygons` — hard-trim oversized ground in
+   layout coordinates before tagging (``clip_to_polygons`` + pad preferred)
+3. :func:`validate_surface_map` / SurfaceMap — name → polygon ids + attr
+4. Optional :func:`validate_gap_map` / GapMap — name → gap ids + attr
+5. :func:`mesh_polygons` / :func:`mesh_gds` — MeshWell CAD/mesh with auto
    ``substrate``, ``air``, ``far_field``, plus SurfaceMap metals and optional
    named ``gap_map`` surfaces (no catch-all gap tag; QM auto-ground lives in
    :mod:`pypalace.qm_mesh`)
@@ -14,7 +16,8 @@ This module implements the GDS path:
 Length kwargs (substrate, airbox, margin, mesh sizes, …) are always in
 **micrometers (µm)** — Palace mesh units when ``L0 = 1e-6``. ``mesh_scale``
 only converts GDS/design coordinates into those mesh units (``1`` for µm
-GDS, ``0.001`` for nm GDS, ``1000`` for mm / Quantum Metal).
+GDS, ``0.001`` for nm GDS, ``1000`` for mm / Quantum Metal). ``clip`` uses
+**layout/GDS coordinates** (same as ``inspect_gds`` axes), not µm kwargs.
 
 Requires ``meshwell`` and ``gdstk`` (core package dependencies).
 """
@@ -317,10 +320,197 @@ def resolve_gds_layers(
     return normalize_gds_layers(layers)
 
 
+def normalize_clip_window(clip: Any) -> tuple[float, float, float, float]:
+    """
+    Normalize a layout-coordinate clip window to ``(xmin, ymin, xmax, ymax)``.
+
+    Accepted forms (same units as ``inspect_gds`` axes / GDS coords):
+
+    - ``(xmin, ymin, xmax, ymax)`` — absolute corners
+    - ``((cx, cy), span)`` — square half-span (same idea as view ``crop``)
+    - ``((cx, cy), (span_x, span_y))`` — rectangular half-spans
+
+    Prefer :func:`clip_window_from_polygons` when cropping around devices.
+    """
+    if clip is None:
+        raise ValueError("clip must not be None")
+
+    if (
+        isinstance(clip, (tuple, list))
+        and len(clip) == 4
+        and all(isinstance(v, (int, float, np.floating, np.integer)) for v in clip)
+    ):
+        xmin, ymin, xmax, ymax = (float(v) for v in clip)
+        if xmin > xmax:
+            xmin, xmax = xmax, xmin
+        if ymin > ymax:
+            ymin, ymax = ymax, ymin
+    elif isinstance(clip, (tuple, list)) and len(clip) == 2:
+        a, b = clip
+        if not (isinstance(a, (tuple, list)) and len(a) == 2):
+            raise ValueError(
+                "clip must be (xmin, ymin, xmax, ymax), "
+                "((cx, cy), span), or ((cx, cy), (span_x, span_y))"
+            )
+        cx, cy = float(a[0]), float(a[1])
+        if isinstance(b, (int, float, np.floating, np.integer)):
+            half = float(b)
+            if half <= 0:
+                raise ValueError("clip span must be positive")
+            xmin, xmax = cx - half, cx + half
+            ymin, ymax = cy - half, cy + half
+        elif (
+            isinstance(b, (tuple, list))
+            and len(b) == 2
+            and all(isinstance(v, (int, float, np.floating, np.integer)) for v in b)
+        ):
+            sx, sy = float(b[0]), float(b[1])
+            if sx <= 0 or sy <= 0:
+                raise ValueError("clip half-spans must be positive")
+            xmin, xmax = cx - sx, cx + sx
+            ymin, ymax = cy - sy, cy + sy
+        else:
+            raise ValueError(
+                "clip must be (xmin, ymin, xmax, ymax), "
+                "((cx, cy), span), or ((cx, cy), (span_x, span_y))"
+            )
+    else:
+        raise ValueError(
+            "clip must be (xmin, ymin, xmax, ymax), "
+            "((cx, cy), span), or ((cx, cy), (span_x, span_y))"
+        )
+
+    if xmax <= xmin or ymax <= ymin:
+        raise ValueError(
+            f"clip window must have positive size, got "
+            f"xmin={xmin}, ymin={ymin}, xmax={xmax}, ymax={ymax}"
+        )
+    return (xmin, ymin, xmax, ymax)
+
+
+def clip_window_from_polygons(
+    polygons: list[Polygon],
+    poly_ids: list[int] | int | None = None,
+    *,
+    pad: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """
+    Build a clip window from selected polygon bounds (+ pad).
+
+    ``pad`` is in the same layout units as the polygons (GDS coords).
+    ``poly_ids=None`` uses every polygon (tight chip bbox + pad).
+
+    Typical workflow: full-chip :func:`inspect_gds` → note device ``p*`` ids
+    → ``clip_to_polygons=[...]`` with a generous ``clip_pad`` so hard-clip
+    cuts land in boring ground, not mid-feedline.
+    """
+    if not polygons:
+        raise ValueError("polygons must be non-empty")
+    if poly_ids is None:
+        ids = list(range(len(polygons)))
+    elif isinstance(poly_ids, (int, np.integer)):
+        ids = [int(poly_ids)]
+    else:
+        ids = [int(i) for i in poly_ids]
+    if not ids:
+        raise ValueError("poly_ids must select at least one polygon")
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for i in ids:
+        if i < 0 or i >= len(polygons):
+            raise ValueError(f"poly id {i} out of range [0, {len(polygons)})")
+        minx, miny, maxx, maxy = polygons[i].bounds
+        xs.extend([minx, maxx])
+        ys.extend([miny, maxy])
+
+    pad = float(pad)
+    if pad < 0:
+        raise ValueError("pad must be >= 0")
+    return (
+        float(min(xs) - pad),
+        float(min(ys) - pad),
+        float(max(xs) + pad),
+        float(max(ys) + pad),
+    )
+
+
+def clip_polygons(
+    polygons: list[Polygon],
+    clip: Any,
+) -> list[Polygon]:
+    """
+    Hard-clip metals with a rectangular window (Shapely intersection).
+
+    Cut edges are blunt closed polygon sides on the window boundary — no
+    special line capping. Prefer a large pad so cuts fall in ground only.
+    A future ``clip_seal`` may add an optional ground frame at the crop
+    perimeter; it is not applied here.
+
+    Result is re-sorted with the same stable key family as
+    :func:`load_gds_polygons`, so ``p*`` ids from :func:`inspect_gds` after
+    the same ``clip`` match :func:`mesh_gds`.
+
+    ``clip`` units = layout / GDS coordinates (not the µm mesh kwargs).
+    """
+    from shapely.geometry import box as shapely_box
+
+    xmin, ymin, xmax, ymax = normalize_clip_window(clip)
+    window = shapely_box(xmin, ymin, xmax, ymax)
+    out: list[Polygon] = []
+    for poly in polygons:
+        if poly is None or getattr(poly, "is_empty", True):
+            continue
+        cut = poly.intersection(window)
+        for part in _flatten_polygons(cut):
+            for cleaned in _clean_polygon(part):
+                if cleaned.is_empty or cleaned.area <= 0:
+                    continue
+                out.append(cleaned)
+
+    def sort_key(p: Polygon):
+        c = p.centroid
+        return (float(c.x), float(c.y), float(p.area))
+
+    out.sort(key=sort_key)
+    return out
+
+
+def _resolve_loaded_polygons(
+    polys: list[Polygon],
+    *,
+    clip: Any = None,
+    clip_to_polygons: list[int] | int | None = None,
+    clip_pad: float = 0.0,
+) -> list[Polygon]:
+    """Apply optional hard clip / clip_to_polygons to a loaded poly list."""
+    if clip is not None and clip_to_polygons is not None:
+        raise ValueError("Use only one of clip or clip_to_polygons")
+    if clip_to_polygons is not None:
+        clip = clip_window_from_polygons(
+            polys, clip_to_polygons, pad=clip_pad
+        )
+    elif clip is not None and float(clip_pad) != 0.0:
+        raise ValueError("clip_pad is only used with clip_to_polygons")
+    if clip is None:
+        return polys
+    clipped = clip_polygons(polys, clip)
+    if not clipped:
+        raise ValueError(
+            "clip removed every polygon — widen the window / pad, or check "
+            "units (clip uses layout/GDS coordinates, same as inspect_gds axes)"
+        )
+    return clipped
+
+
 def load_gds_polygons(
     gds_file: str | Path,
     layers: Any = None,
     cell_name: str | None = None,
+    *,
+    clip: Any = None,
+    clip_to_polygons: list[int] | int | None = None,
+    clip_pad: float = 0.0,
 ) -> list[Polygon]:
     """
     Load polygons from one or more GDS layers as a stable-ordered list.
@@ -336,9 +526,21 @@ def load_gds_polygons(
         Sequence of ``(layer, datatype)`` pairs, e.g. ``[(1, 0)]`` or
         ``[(1, 0), (2, 0)]``. ``None`` (default) loads **all** layers
         present in the cell. A single pair ``(1, 0)`` is also accepted.
+    clip :
+        Optional rectangular window in **layout/GDS coordinates**. Hard
+        Shapely-intersects every metal before return (trims oversized
+        ground). Forms: ``(xmin, ymin, xmax, ymax)``, ``((cx, cy), span)``,
+        or ``((cx, cy), (span_x, span_y))``.
+    clip_to_polygons :
+        Preferred alternative to ``clip``: window = bbox of these
+        **pre-clip** ``p*`` ids (from a full-chip :func:`inspect_gds`) plus
+        ``clip_pad``.
+    clip_pad :
+        Extra pad around ``clip_to_polygons`` in layout/GDS units. Use a
+        generous pad so hard-clip cuts land in boring ground.
 
     Order is by ``(centroid_x, centroid_y, area, layer, datatype)`` so ids
-    stay stable across reloads for the same layer set.
+    stay stable across reloads for the same layer set (+ same clip).
     """
     from shapely.geometry import Polygon as ShapelyPolygon
 
@@ -392,7 +594,15 @@ def load_gds_polygons(
         return (float(c.x), float(c.y), float(p.area), layer_num, datatype)
 
     tagged.sort(key=sort_key)
-    return [p for p, _layer, _dtype in tagged]
+    polys = [p for p, _layer, _dtype in tagged]
+    # clip_to_polygons ids refer to the unclipped list — resolve after load.
+    if clip_to_polygons is not None:
+        return _resolve_loaded_polygons(
+            polys,
+            clip_to_polygons=clip_to_polygons,
+            clip_pad=clip_pad,
+        )
+    return _resolve_loaded_polygons(polys, clip=clip)
 
 
 def validate_surface_map(
@@ -671,6 +881,9 @@ def inspect_gds(
     gaps_only: bool = False,
     zoom_to_polygons: list[int] | int | None = None,
     crop: tuple | None = None,
+    clip: Any = None,
+    clip_to_polygons: list[int] | int | None = None,
+    clip_pad: float = 0.0,
     show: bool = True,
     save: str | Path | None = None,
 ) -> pd.DataFrame:
@@ -689,6 +902,11 @@ def inspect_gds(
     ``layers`` is a sequence of ``(layer, datatype)`` pairs merged onto one
     plane, or ``None`` (default) for **all** layers in the cell. Use the same
     value in :func:`mesh_gds`.
+
+    ``clip`` / ``clip_to_polygons`` hard-trim metals in layout coordinates
+    **before** labeling (same kwargs as :func:`mesh_gds`) — use this to drop
+    oversized ground, then read the new ``p*`` ids. ``crop`` only zooms the
+    plot viewport and does not change geometry or ids.
     """
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
@@ -697,7 +915,12 @@ def inspect_gds(
         gds_file, layers=layers, cell_name=cell_name
     )
     polys = load_gds_polygons(
-        gds_file, layers=layer_list, cell_name=cell_name
+        gds_file,
+        layers=layer_list,
+        cell_name=cell_name,
+        clip=clip,
+        clip_to_polygons=clip_to_polygons,
+        clip_pad=clip_pad,
     )
     if layers is None:
         layer_label = "all"
@@ -1502,6 +1725,9 @@ def mesh_gds(
     gap_map: dict | None = None,
     identify_arcs: bool = False,
     fuzzy_value: float | None = None,
+    clip: Any = None,
+    clip_to_polygons: list[int] | int | None = None,
+    clip_pad: float = 0.0,
 ) -> pd.DataFrame:
     """
     Mesh a GDS layout with MeshWell for Palace.
@@ -1514,12 +1740,22 @@ def mesh_gds(
 
     See :func:`mesh_polygons` for the shared MeshWell core and unit notes.
     ``layers`` selects GDS ``(layer, datatype)`` pairs (default: all layers).
+
+    ``clip`` / ``clip_to_polygons`` hard-trim metals in layout coordinates
+    before meshing (same as :func:`inspect_gds`). SurfaceMap / GapMap ids
+    must come from an inspect pass that used the **same** clip. Prefer
+    ``clip_to_polygons`` + a generous ``clip_pad`` so cuts land in ground.
     """
     layer_list = resolve_gds_layers(
         gds_file, layers=layers, cell_name=cell_name
     )
     polys = load_gds_polygons(
-        gds_file, layers=layer_list, cell_name=cell_name
+        gds_file,
+        layers=layer_list,
+        cell_name=cell_name,
+        clip=clip,
+        clip_to_polygons=clip_to_polygons,
+        clip_pad=clip_pad,
     )
     if len(polys) == 0:
         raise ValueError(
