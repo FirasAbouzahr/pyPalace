@@ -206,7 +206,7 @@ def build_qm_meshwell_layout(
     *,
     Attributes: dict[str | tuple[int | str, str], int] | None = None,
     gap_map: dict | None = None,
-    margin: float = 0.0,
+    margin: float = 0.5,
     margin_x: float | None = None,
     margin_y: float | None = None,
     ground_plane_attr: int | str = "auto",
@@ -417,7 +417,7 @@ def mesh_quantum_metal_meshwell(
     gap_map: dict | None = None,
     substrate_thickness: float = 500.0,
     airbox_height: float = 500.0,
-    margin: float = 0.0,
+    margin: float = 500.0,
     margin_x: float | None = None,
     margin_y: float | None = None,
     volume_mesh_size: float = 250.0,
@@ -440,7 +440,9 @@ def mesh_quantum_metal_meshwell(
     ``auto_ground=True`` (QM-only; not used by ``mesh_gds``), and tags
     etch/gaps only via ``gap_map`` (same nomenclature as ``mesh_gds``).
     Length kwargs are always in **µm**; ``mesh_scale`` only converts design
-    coordinates (default ``1000`` for mm → µm). Airbridges raise
+    coordinates (default ``1000`` for mm → µm). Default ``margin`` is
+    500 µm — it pads the auto-synthesized ground chip bbox (unlike GDS
+    ``mesh_gds``, where margin defaults to 0). Airbridges raise
     ``NotImplementedError``.
     """
     if float(mesh_scale) == 0.0:
