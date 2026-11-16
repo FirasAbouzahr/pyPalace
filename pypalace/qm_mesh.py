@@ -417,7 +417,7 @@ def mesh_quantum_metal_meshwell(
     gap_map: dict | None = None,
     substrate_thickness: float = 500.0,
     airbox_height: float = 500.0,
-    margin: float = 500.0,
+    margin: float = 0.0,
     margin_x: float | None = None,
     margin_y: float | None = None,
     volume_mesh_size: float = 250.0,

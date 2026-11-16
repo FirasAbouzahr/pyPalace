@@ -809,10 +809,9 @@ class Mesh:
         one plane, or ``None`` (default) for **all** layers in the cell.
         Match :meth:`mesh_gds`.
 
-        ``clip`` / ``clip_to_polygons`` hard-trim metals (layout coords)
-        before labeling — drop oversized ground, then read new ``p*`` ids.
-        Prefer ``clip_to_polygons`` + generous ``clip_pad``. ``crop`` only
-        zooms the viewport.
+        ``clip=(x1, y1, x2, y2)`` hard-trims metals (layout coords) before
+        labeling — drop oversized ground, then read new ``p*`` ids.
+        ``crop`` only zooms the viewport.
         """
         from .gds_mesh import inspect_gds
 
@@ -956,9 +955,13 @@ class Mesh:
             layers in the cell. Use the same value in :meth:`inspect_gds`.
         cell_name : str, optional
             GDS cell to read; default is the top cell.
-        substrate_thickness, airbox_height, margin, margin_x, margin_y:
+        substrate_thickness, airbox_height:
             Geometry lengths in **µm**. Omitted → 500 µm.
             ``airbox_height`` is vacuum above the metal plane.
+        margin, margin_x, margin_y:
+            Extra chip padding beyond the metal bbox in **µm**. Default
+            ``0`` (domain flush to metals). Use ``clip=(x1, y1, x2, y2)``
+            to shrink oversized ground rather than padding outward.
         airbox_height_below :
             Optional vacuum under the substrate in **µm**. Default ``0``
             (unchanged stack). When > 0, tagged as Palace ``air`` and
@@ -992,16 +995,14 @@ class Mesh:
             OCC boolean fuzzy tolerance in mesh units (µm). Default matches the
             internal polygon snap tolerance.
         clip :
-            Optional layout-coordinate window; hard Shapely-intersects metals
-            before meshing. Forms: ``(xmin, ymin, xmax, ymax)``,
-            ``((cx, cy), span)``, or ``((cx, cy), (span_x, span_y))``.
-            Match :meth:`inspect_gds`.
+            Hard-clip window in layout/GDS coordinates (same as inspect axes).
+            **Main form:** ``(x1, y1, x2, y2)``. Also ``((cx, cy), span)`` or
+            ``((cx, cy), (span_x, span_y))``. Match :meth:`inspect_gds`.
         clip_to_polygons :
-            Preferred alternative: window = bbox of these **pre-clip** ``p*``
-            ids from a full-chip inspect, plus ``clip_pad``.
+            Optional shortcut: bbox of these **pre-clip** ``p*`` ids plus
+            ``clip_pad``. Prefer an explicit ``(x1, y1, x2, y2)``.
         clip_pad :
-            Extra pad around ``clip_to_polygons`` in layout/GDS units. Pad
-            generously so cuts land in boring ground.
+            Extra pad around ``clip_to_polygons`` in layout/GDS units.
         """
         from .gds_mesh import mesh_gds
 
@@ -1933,7 +1934,7 @@ class Mesh:
         gap_map: dict | None = None,
         substrate_thickness: float = 500.0,
         airbox_height: float = 500.0,
-        margin: float = 500.0,
+        margin: float = 0.0,
         margin_x: float | None = None,
         margin_y: float | None = None,
         volume_mesh_size: float = 250.0,
@@ -2001,7 +2002,7 @@ class Mesh:
             Geometry lengths in **µm**. Defaults 500 / 500 (same as ``mesh_gds``).
         margin:
             Chip padding in **µm** when ``margin_x`` / ``margin_y`` are omitted.
-            Default 500.
+            Default ``0`` (domain flush to metals).
         margin_x, margin_y:
             Chip padding in **µm**. Default to ``margin`` when omitted.
         volume_mesh_size:
