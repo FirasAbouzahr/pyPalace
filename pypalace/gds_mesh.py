@@ -79,6 +79,57 @@ def _min_geometry_gap(geoms: dict[str, Any]) -> float | None:
     return best
 
 
+# SurfaceMap names whose outer curves are (or become) the domain perimeter.
+# A curve ThresholdField on these would refine the whole chip rim out to
+# ``refinement_radius`` — especially bad after ``clip=`` with fine ground.
+_DOMAIN_PERIMETER_SURFACE_NAMES = frozenset({"ground_plane", "far_field"})
+
+
+def _owns_domain_perimeter(geom: Any, chip: Polygon, tol: float) -> bool:
+    """True when filled ``geom`` exterior hugs most of the chip outer boundary."""
+    parts = [p for p in _flatten_polygons(geom) if not p.is_empty and p.area > 0]
+    if not parts:
+        return False
+    filled: list[Polygon] = []
+    for p in parts:
+        filled.extend(_flatten_polygons(_fill_holes(p)))
+    if not filled:
+        return False
+    outer = unary_union(filled)
+    if outer is None or getattr(outer, "is_empty", True):
+        return False
+    chip_len = float(chip.exterior.length)
+    if chip_len <= 0.0:
+        return False
+    pad = max(float(tol) * 10.0, 1e-9)
+    try:
+        shared = chip.exterior.buffer(pad).intersection(outer.boundary)
+    except Exception:
+        return False
+    shared_len = float(getattr(shared, "length", 0.0) or 0.0)
+    return shared_len >= 0.5 * chip_len
+
+
+def _use_curve_size_halo(
+    name: str,
+    geom: Any,
+    chip: Polygon,
+    tol: float,
+) -> bool:
+    """Whether a fine surface should get a curve ``ThresholdField`` halo.
+
+    Metals / gaps: yes (feature edges bleed fine size into the volume).
+    Domain-perimeter owners (``ground_plane``, ``far_field``, or any surface
+    whose outer ring hugs the chip bbox — typical after ``clip=``): no.
+    Face ``ConstantInField`` still applies either way.
+    """
+    if name in _DOMAIN_PERIMETER_SURFACE_NAMES:
+        return False
+    if geom is not None and _owns_domain_perimeter(geom, chip, tol):
+        return False
+    return True
+
+
 def _flatten_polygons(geom) -> list[Polygon]:
     """Return individual non-empty Polygon objects from a Shapely geometry."""
     if geom is None or geom.is_empty:
@@ -1222,6 +1273,13 @@ def mesh_polygons(
     refinement radius, ``airbox_height_below``) are always in **µm**.
     ``mesh_scale`` only multiplies polygon coordinates into mesh units.
 
+    Fine ``custom_surface_mesh`` / default surface sizes get a curve
+    ``ThresholdField`` halo into the volume out to ``refinement_radius``,
+    except for domain-perimeter surfaces (``ground_plane``, ``far_field``,
+    or any surface whose outer ring hugs the chip bbox — typical after
+    ``clip=``). Those keep face ``ConstantInField`` only so a fine ground
+    does not refine the whole domain edge.
+
     ``gap_polygons``, when given, replaces the usual
     ``enumerate_gap_pieces(polygons)`` derivation (used for QM etch
     footprints). Named ``gap_map`` ids index into that list.
@@ -1640,12 +1698,23 @@ def mesh_polygons(
             )
         )
 
-    # Same sizing path for SurfaceMap metals and named gap_map surfaces.
+    # SurfaceMap metals and named gap_map surfaces share face ConstantInField.
+    # Curve ThresholdField (edge → volume halo) is for feature edges only —
+    # skip it for domain-perimeter surfaces (ground_plane / far_field, or any
+    # surface whose outer ring hugs the chip after clip=) so a fine ground
+    # does not put a thick refinement rim around the whole domain edge.
     resolution_specs: dict[str, list] = {}
     for name in list(ordered_names) + list(ordered_gap_names):
         size = float(custom_surface_mesh.get(name, surface_mesh_size))
         specs = [ConstantInField(apply_to="surfaces", resolution=size)]
-        if h_refine > 0 and size < h_vol:
+        geom = name_geoms.get(name)
+        if geom is None:
+            geom = gap_geoms.get(name)
+        if (
+            h_refine > 0
+            and size < h_vol
+            and _use_curve_size_halo(name, geom, chip, snap)
+        ):
             specs.append(
                 ThresholdField(
                     apply_to="curves",
