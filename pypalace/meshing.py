@@ -1934,7 +1934,7 @@ class Mesh:
         gap_map: dict | None = None,
         substrate_thickness: float = 500.0,
         airbox_height: float = 500.0,
-        margin: float = 0.0,
+        margin: float = 500.0,
         margin_x: float | None = None,
         margin_y: float | None = None,
         volume_mesh_size: float = 250.0,
@@ -2002,7 +2002,10 @@ class Mesh:
             Geometry lengths in **µm**. Defaults 500 / 500 (same as ``mesh_gds``).
         margin:
             Chip padding in **µm** when ``margin_x`` / ``margin_y`` are omitted.
-            Default ``0`` (domain flush to metals).
+            Default ``500``. On MeshWell with ``auto_ground=True`` this pads
+            the synthesized ``ground_plane`` chip bbox (QM-only — GDS
+            ``mesh_gds`` keeps margin default ``0`` and uses ``clip=`` to
+            shrink oversized ground).
         margin_x, margin_y:
             Chip padding in **µm**. Default to ``margin`` when omitted.
         volume_mesh_size:
