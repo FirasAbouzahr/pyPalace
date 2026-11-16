@@ -206,7 +206,7 @@ def build_qm_meshwell_layout(
     *,
     Attributes: dict[str | tuple[int | str, str], int] | None = None,
     gap_map: dict | None = None,
-    margin: float = 0.5,
+    margin: float = 0.0,
     margin_x: float | None = None,
     margin_y: float | None = None,
     ground_plane_attr: int | str = "auto",
