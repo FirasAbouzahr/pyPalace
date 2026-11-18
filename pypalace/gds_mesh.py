@@ -115,14 +115,21 @@ def _use_curve_size_halo(
     geom: Any,
     chip: Polygon,
     tol: float,
+    *,
+    is_gap: bool = False,
 ) -> bool:
     """Whether a fine surface should get a curve ``ThresholdField`` halo.
 
-    Metals / gaps: yes (feature edges bleed fine size into the volume).
+    Metals: yes (feature edges bleed fine size into the volume).
+    GapMap surfaces: no — trench walls already get a halo from facing metal
+    edges; a second gap-curve field over-refines the dielectric rim and often
+    hurts Palace/MFEM κ.
     Domain-perimeter owners (``ground_plane``, ``far_field``, or any surface
     whose outer ring hugs the chip bbox — typical after ``clip=``): no.
     Face ``ConstantInField`` still applies either way.
     """
+    if is_gap:
+        return False
     if name in _DOMAIN_PERIMETER_SURFACE_NAMES:
         return False
     if geom is not None and _owns_domain_perimeter(geom, chip, tol):
@@ -1273,12 +1280,13 @@ def mesh_polygons(
     refinement radius, ``airbox_height_below``) are always in **µm**.
     ``mesh_scale`` only multiplies polygon coordinates into mesh units.
 
-    Fine ``custom_surface_mesh`` / default surface sizes get a curve
-    ``ThresholdField`` halo into the volume out to ``refinement_radius``,
-    except for domain-perimeter surfaces (``ground_plane``, ``far_field``,
-    or any surface whose outer ring hugs the chip bbox — typical after
-    ``clip=``). Those keep face ``ConstantInField`` only so a fine ground
-    does not refine the whole domain edge.
+    Fine metal ``custom_surface_mesh`` / default surface sizes get a curve
+    ``ThresholdField`` halo into the volume out to ``refinement_radius``.
+    GapMap surfaces and domain-perimeter surfaces (``ground_plane``,
+    ``far_field``, or any surface whose outer ring hugs the chip bbox —
+    typical after ``clip=``) keep face ``ConstantInField`` only: gap-curve
+    halos duplicate metal trench-wall refinement and inflate κ; fine ground
+    must not rim the whole domain edge.
 
     ``gap_polygons``, when given, replaces the usual
     ``enumerate_gap_pieces(polygons)`` derivation (used for QM etch
@@ -1699,11 +1707,14 @@ def mesh_polygons(
         )
 
     # SurfaceMap metals and named gap_map surfaces share face ConstantInField.
-    # Curve ThresholdField (edge → volume halo) is for feature edges only —
-    # skip it for domain-perimeter surfaces (ground_plane / far_field, or any
-    # surface whose outer ring hugs the chip after clip=) so a fine ground
-    # does not put a thick refinement rim around the whole domain edge.
+    # Curve ThresholdField (edge → volume halo) is for metal feature edges
+    # only. Skip it for:
+    # - GapMap surfaces (trench walls already get a halo from facing metals;
+    #   a second gap-curve field over-refines the dielectric rim / κ),
+    # - domain-perimeter surfaces (ground_plane / far_field, or any surface
+    #   whose outer ring hugs the chip after clip=).
     resolution_specs: dict[str, list] = {}
+    gap_name_set = set(ordered_gap_names)
     for name in list(ordered_names) + list(ordered_gap_names):
         size = float(custom_surface_mesh.get(name, surface_mesh_size))
         specs = [ConstantInField(apply_to="surfaces", resolution=size)]
@@ -1713,7 +1724,9 @@ def mesh_polygons(
         if (
             h_refine > 0
             and size < h_vol
-            and _use_curve_size_halo(name, geom, chip, snap)
+            and _use_curve_size_halo(
+                name, geom, chip, snap, is_gap=name in gap_name_set
+            )
         ):
             specs.append(
                 ThresholdField(

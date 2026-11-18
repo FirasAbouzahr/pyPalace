@@ -970,15 +970,16 @@ class Mesh:
             Bulk / metal-surface mesh targets in **µm**. Omitted → 250 / 20.
         custom_surface_mesh : dict, optional
             Per-name surface size overrides (SurfaceMap and GapMap names)
-            in **µm**. Fine sizes also drive a curve→volume halo out to
-            ``refinement_radius``, except for domain-perimeter surfaces
-            (``ground_plane``, ``far_field``, or any surface whose outer
-            ring hugs the chip after ``clip=``) — those get face sizing
-            only, so a fine ground does not rim the whole domain edge.
+            in **µm**. Fine **metal** sizes also drive a curve→volume halo
+            out to ``refinement_radius``. GapMap names and domain-perimeter
+            surfaces (``ground_plane``, ``far_field``, or any surface whose
+            outer ring hugs the chip after ``clip=``) get face sizing only
+            — gap-curve halos duplicate metal trench-wall refinement; fine
+            ground must not rim the whole domain edge.
         refinement_radius :
-            Distance over which metal/gap surface sizing grows to
+            Distance over which metal surface sizing grows to
             ``volume_mesh_size``, in **µm**. Omitted → 150. Not applied as
-            a curve halo on domain-perimeter surfaces (see
+            a curve halo on GapMap or domain-perimeter surfaces (see
             ``custom_surface_mesh``).
         mesh_scale :
             Multiplies GDS coordinates into mesh units (µm). Default ``1``
